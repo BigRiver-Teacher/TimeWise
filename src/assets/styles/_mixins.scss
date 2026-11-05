@@ -1,0 +1,187 @@
+// 全局 SCSS 工具：由 vite.config.ts 自动注入到每个 <style lang="scss">，只放 mixin / 函数 / 断点，不产出 CSS
+@use "sass:list";
+
+$bp-mobile: 768px;
+$bp-tablet: 1024px;
+
+@mixin mobile {
+  @media (max-width: $bp-mobile) {
+    @content;
+  }
+}
+
+@mixin tablet {
+  @media (max-width: $bp-tablet) {
+    @content;
+  }
+}
+
+// 给 CSS 变量颜色加透明度：tint(brand, 20%) → brand 的 20% 不透明版本
+@function tint($name, $amount) {
+  @return color-mix(in srgb, var(--#{$name}) #{$amount}, transparent);
+}
+
+@mixin transition($props...) {
+  @if list.length($props) == 0 {
+    $props: (background, border-color, box-shadow, color, transform);
+  }
+  $list: ();
+  @each $p in $props {
+    $list: list.append($list, $p var(--dur) var(--ease), comma);
+  }
+  transition: $list;
+}
+
+@mixin focus-ring {
+  &:focus-visible {
+    outline: 2px solid var(--brand-ring);
+    outline-offset: 2px;
+  }
+}
+
+// 外层玻璃面板
+@mixin glass-panel($padding: 24px) {
+  padding: $padding;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+// 面板内的卡片：更实的底色 + 小阴影，hover 抬起
+@mixin inner-card($hover: true) {
+  border: 1px solid var(--app-line-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-inner);
+  box-shadow: var(--shadow-sm);
+  @include transition;
+
+  @if $hover {
+    &:hover {
+      box-shadow: var(--shadow-hover);
+      transform: translateY(-2px);
+    }
+  }
+}
+
+// 页头：标题 + 副标题 + 右侧操作
+@mixin page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@mixin page-title {
+  color: var(--app-text);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+@mixin page-subtitle {
+  margin-top: 6px;
+  color: var(--app-text-muted);
+  font-size: var(--fs-sm);
+}
+
+// 面板标题行：图标 + 标题 + 说明
+@mixin panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+@mixin panel-icon($color: brand) {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: tint($color, 14%);
+  color: var(--#{$color});
+  font-size: 18px;
+}
+
+@mixin panel-title {
+  color: var(--app-text);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+@mixin panel-sub {
+  margin-top: 2px;
+  color: var(--app-text-subtle);
+  font-size: var(--fs-xs);
+}
+
+// 小状态胶囊（如「已自动保存」「提醒已开启」）
+@mixin status-pill($color: success) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid tint($color, 28%);
+  border-radius: var(--radius-pill);
+  background: tint($color, 12%);
+  color: var(--#{$color});
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+@mixin status-dot($color: success) {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--#{$color});
+  box-shadow: 0 0 0 3px tint($color, 18%);
+}
+
+@mixin ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--ai-gradient);
+  color: #fff;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+// el-input / el-textarea 外框的 hover 与 focus 反馈
+@mixin field-states {
+  @include transition(box-shadow, background);
+
+  &:hover {
+    box-shadow: 0 0 0 1px tint(brand, 40%) inset;
+  }
+
+  &.is-focus,
+  &:focus-within {
+    box-shadow: 0 0 0 1px var(--brand) inset, 0 0 0 4px tint(brand, 14%);
+  }
+}
+
+// 主按钮 hover 抬起（自带 transition，避免跳变）
+@mixin lift-button {
+  @include transition;
+
+  &:hover:not(:disabled):not(.is-disabled) {
+    box-shadow: var(--shadow-brand);
+    transform: translateY(-1px);
+  }
+
+  &:active:not(:disabled):not(.is-disabled) {
+    transform: translateY(0);
+  }
+}
