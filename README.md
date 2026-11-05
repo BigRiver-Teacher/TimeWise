@@ -1,42 +1,59 @@
-# MindDemo
+<div align="center">
 
-This template should help get you started developing with Vue 3 in Vite.
+# 🕒 知时 TimeWise
 
-## Recommended IDE Setup
+**一款主打「隐私安全」与「主动智能」的全栈多模态智能备忘录**
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+[![Vue 3](https://img.shields.io/badge/Vue-3.x-4fc08d?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-black?style=flat-square)](https://ollama.com/)
 
-## Recommended Browser Setup
+<p align="center">
+  <i>告别繁琐记录，让 AI 帮你从杂乱的截图和文档中自动提取待办。</i>
+</p>
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+</div>
 
-## Type Support for `.vue` Imports in TS
+---
 
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
+## ✨ 项目背景与核心亮点 (Features)
 
-## Customize configuration
+传统的备忘录只能被动记录，而 `知时 TimeWise` 结合了前端 WebAssembly 解析技术与本地多模态大模型，实现了**从“杂乱信息”到“结构化待办”的自动化闭环**。
 
-See [Vite Configuration Reference](https://vite.dev/config/).
+- **🔒 绝对隐私，全本地运行**：数据存储于本地 SQLite，AI 推理依赖本地 Ollama。**零云端传输**，断网亦可使用。
+- **👁️ 多模态智能录入**：支持 PDF、Word、图片。前端利用 `pdfjs-dist` / `mammoth` 纯离线提取文字，配合本地视觉大模型（Qwen-VL）实现截图自动转录。
+- **🧠 双 Agent 级联提取**：结合视觉模型与文本模型，将文档/截图自动清洗、概括，并提取为结构化数据（任务名、时间、优先级、要点）。
+- **⏰ NLP 时间引擎与分级提醒**：内置自研时间正则解析器，支持“明天下午3点”等自然语言。结合浏览器 Notification API 实现阶梯式系统级弹窗提醒。
+- **🎨 现代高定 UI**：基于 Vue3 + Element Plus，采用 Design Tokens 打造，支持磨砂玻璃质感、动态渐变背景与深色模式。
 
-## Project Setup
+---
 
-```sh
-pnpm install
-```
+## 🛠️ 技术栈 (Tech Stack)
 
-### Compile and Hot-Reload for Development
+| 分类 | 技术选型 |
+| :--- | :--- |
+| **前端核心** | Vue 3 (Composition API), TypeScript, Vite, Pinia, Vue Router |
+| **UI 与图表** | Element Plus, ECharts, SCSS (Design Tokens) |
+| **前端文档解析** | `pdfjs-dist`, `mammoth.js` (纯浏览器端解析) |
+| **后端服务** | Node.js, Express, CORS |
+| **数据持久化** | SQLite (`better-sqlite3`) |
+| **本地 AI Agent** | Ollama (`qwen2.5-vl:3b` 视觉模型, `qwen2.5:3b` 文本模型) |
 
-```sh
-pnpm dev
-```
+---
 
-### Type-Check, Compile and Minify for Production
+## 🚀 本地部署指南 (Local Deployment)
 
-```sh
-pnpm build
-```
+### 0. 环境准备
+请确保你的电脑已安装：
+- [Node.js](https://nodejs.org/) (建议 v18+)
+- [Ollama](https://ollama.com/) (用于运行本地大模型)
+
+### 1. 启动本地 AI Agent (Ollama)
+打开终端，拉取并运行项目所需的两个模型（普通 16GB 内存的电脑即可流畅运行）：
+```bash
+# 拉取视觉大模型 (约 3.2GB，用于读取图片/文档截图)
+ollama run qwen2.5vl:3b
+
+# 拉取文本大模型 (约 1.9GB，用于结构化总结)
+ollama run qwen2.5:3b
