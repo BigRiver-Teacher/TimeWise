@@ -135,11 +135,41 @@ const filteredMemos = computed(() => {
   );
 });
 
-const todayCount = computed(
-  () => memos.value.filter((memo) => memo.time.startsWith("今天")).length,
-);
-const overdueCount = computed(() => (memos.value.length ? 1 : 0));
-const weeklyDoneRate = computed(() => (memos.value.length ? 78 : 0));
+/* ---------------------------- 动态看板数据计算 ---------------------------- */
+
+// 1. 今日待办：截止时间在今天且未完成的任务数
+const todayCount = computed(() => {
+  const now = new Date();
+  return memos.value.filter((memo) => {
+    if (memo.completed) return false;
+    const due = parseMemoTime(memo.time);
+    if (!due) return false;
+    return (
+      due.getFullYear() === now.getFullYear() &&
+      due.getMonth() === now.getMonth() &&
+      due.getDate() === now.getDate()
+    );
+  }).length;
+});
+
+// 2. 已逾期：截止时间早于当前时间且未完成的任务数
+const overdueCount = computed(() => {
+  const now = Date.now();
+  return memos.value.filter((memo) => {
+    if (memo.completed) return false;
+    const due = parseMemoTime(memo.time);
+    if (!due) return false;
+    return due.getTime() < now;
+  }).length;
+});
+
+// 3. 本周完成率：已完成数 / 总任务数（如果总数为 0 则返回 0）
+const weeklyDoneRate = computed(() => {
+  const total = memos.value.length;
+  if (total === 0) return 0;
+  const completed = memos.value.filter((memo) => memo.completed).length;
+  return Math.round((completed / total) * 100);
+});
 
 const pageSubtitle = computed(() =>
   memos.value.length
