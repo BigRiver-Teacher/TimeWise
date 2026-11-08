@@ -1302,6 +1302,12 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   -webkit-backdrop-filter: blur(var(--glass-blur));
 
   padding: 22px 24px 24px;
+
+  animation: rise-in 0.5s var(--ease) backwards;
+
+  &.status-panel {
+    animation-delay: 90ms;
+  }
 }
 
 .panel-head {
@@ -1420,17 +1426,29 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   background: var(--input-bg);
   transition:
     border-color 0.2s ease,
-    background 0.2s ease;
+    background 0.2s ease,
+    box-shadow 0.25s ease;
 
   &:hover {
     border-color: rgba($ai, 0.6);
     background: var(--input-bg);
+    box-shadow: 0 10px 24px -14px rgba($ai, 0.45);
+
+    .upload-icon {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 16px -8px rgba($ai, 0.6);
+    }
   }
 
   &.is-dragover {
     border-color: $ai;
     border-style: solid;
     background: rgba(237, 233, 255, 0.7);
+    box-shadow: 0 14px 30px -14px rgba($ai, 0.55);
+
+    .upload-icon {
+      transform: translateY(-4px) scale(1.06);
+    }
   }
 }
 
@@ -1450,6 +1468,9 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   border-radius: 50%;
   background: rgba($ai, 0.1);
   color: $ai;
+  transition:
+    transform 0.25s var(--ease),
+    box-shadow 0.25s ease;
 
   .icon {
     width: 19px;
@@ -1578,6 +1599,25 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
     font-size: 12px;
     background: $surface;
   }
+}
+
+/* ---------------- 状态面板三态切换（模板里 Transition name="fade"） ---------------- */
+.fade-enter-active {
+  transition: opacity 0.28s ease, transform 0.28s var(--ease);
+}
+
+.fade-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.fade-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 /* ---------------- 进度 ---------------- */
@@ -1911,6 +1951,9 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   max-width: 1200px;
   margin: 20px auto 0;
   padding: 16px 20px;
+
+  animation: rise-in 0.5s var(--ease) backwards;
+  animation-delay: 160ms;
 }
 
 .action-hint {
@@ -1951,6 +1994,11 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
     background: linear-gradient(135deg, #9668f7, #6f3bdd);
     transform: translateY(-1px);
     box-shadow: 0 12px 24px -10px rgba($ai, 0.8);
+  }
+
+  &:active:not(.is-disabled) {
+    transform: translateY(0) scale(0.98);
+    transition-duration: 0.1s;
   }
 
   &.is-disabled {

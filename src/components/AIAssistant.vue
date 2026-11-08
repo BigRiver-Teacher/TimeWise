@@ -316,6 +316,22 @@ $ai: #8b5cf6;
     transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 0.25s ease;
 
+  /* 呼吸光环：提示 AI 助手常驻可用，展开时隐藏避免干扰 */
+  &::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 2px solid rgba($brand, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    animation: fab-ring 3s ease-out infinite;
+  }
+
+  &[aria-expanded="true"]::after {
+    animation: none;
+  }
+
   svg {
     width: 26px;
     height: 26px;
@@ -335,6 +351,19 @@ $ai: #8b5cf6;
   &:focus-visible {
     outline: 3px solid rgba($brand, 0.45);
     outline-offset: 3px;
+  }
+}
+
+@keyframes fab-ring {
+  0% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.45);
   }
 }
 
@@ -464,6 +493,9 @@ $ai: #8b5cf6;
   align-items: flex-end;
   gap: 8px;
   max-width: 100%;
+
+  /* 新消息（含思考中的点点）从底部弹入 */
+  animation: rise-in 0.32s var(--ease, ease) backwards;
 
   &.is-user {
     justify-content: flex-end;
@@ -679,6 +711,10 @@ $ai: #8b5cf6;
   .fab,
   .chat-send {
     transition: none;
+  }
+
+  .fab::after {
+    animation: none;
   }
 
   .chat-pop-enter-active,

@@ -39,7 +39,12 @@
   --glass-bg-strong: rgba(255, 255, 255, 0.78);
   --glass-border: rgba(255, 255, 255, 0.55);
   --glass-blur: 12px;
+  --glass-blur-strong: 18px;
   --glass-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 12px 28px -14px rgba(31, 41, 55, 0.16);
+
+  /* 背景径向光晕：左上偏紫、右下偏靛蓝，给渐变底色加纵深 */
+  --glow-a: rgba(139, 92, 246, 0.13);
+  --glow-b: rgba(79, 70, 229, 0.1);
 
   /* 背景薄纱 */
   --veil-top: rgba(255, 255, 255, 0.24);
@@ -172,6 +177,10 @@ html.dark {
   --glass-border: rgba(255, 255, 255, 0.12);
   --glass-shadow: 0 4px 6px rgba(0, 0, 0, 0.34), 0 14px 30px -16px rgba(0, 0, 0, 0.7);
 
+  /* 深色下光晕更收敛，避免抢内容 */
+  --glow-a: rgba(139, 92, 246, 0.16);
+  --glow-b: rgba(99, 102, 241, 0.12);
+
   --veil-top: rgba(6, 8, 14, 0.14);
   --veil-bottom: rgba(6, 8, 14, 0.26);
 
@@ -271,14 +280,18 @@ html.dark body {
   }
 }
 
-/* 薄纱：亮色压白、深色压暗，保留渐变流动又不喧宾夺主 */
+/* 薄纱 + 径向光晕：亮色压白、深色压暗，保留渐变流动又不喧宾夺主；
+   两团柔和光晕给背景增加纵深，漂浮图标浮在其上 */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: linear-gradient(180deg, var(--veil-top), var(--veil-bottom));
+  background:
+    radial-gradient(620px 420px at 10% 4%, var(--glow-a), transparent 62%),
+    radial-gradient(760px 520px at 94% 98%, var(--glow-b), transparent 62%),
+    linear-gradient(180deg, var(--veil-top), var(--veil-bottom));
 }
 
 /* 尊重系统「减少动态效果」设置 */
@@ -339,4 +352,93 @@ body .el-card {
   box-shadow: var(--glass-shadow);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+/* ---------------- 统一入场动画（各页面错峰复用） ----------------
+   只定义 from，配合 backwards 填充：动画结束后不占用 transform，
+   悬停位移等过渡不受影响。错峰延迟由各处 --i 变量控制。 */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+
+/* ---------------- 滚动条主题化 ---------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-line) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--app-line);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--app-text-subtle);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------------- Element Plus 弹层磨砂玻璃 ---------------- */
+/* 遮罩：轻模糊，突出弹层 */
+.el-overlay {
+  background-color: rgba(15, 23, 42, 0.32);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+/* 确认框 / 对话框 */
+.el-message-box {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg-strong);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur-strong));
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong));
+}
+
+.el-dialog {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(var(--glass-blur-strong));
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong));
+}
+
+/* 下拉浮层（select / date-picker 等浅色 popper） */
+.el-popper.is-light {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(var(--glass-blur-strong));
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong));
+  box-shadow: var(--glass-shadow);
+}
+
+.el-popper.is-light .el-popper__arrow::before {
+  border-color: var(--glass-border);
+  background: var(--glass-bg-strong);
+}
+
+/* 轻提示 toast */
+.el-message {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(var(--glass-blur-strong));
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong));
+  box-shadow: var(--glass-shadow);
+}
+
+/* 表格 / 弹层内输入控件跟随玻璃底色 */
+.el-popper.is-light .el-input__wrapper,
+.el-popper.is-light .el-textarea__inner {
+  background: var(--input-bg);
 }

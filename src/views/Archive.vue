@@ -172,7 +172,12 @@ const filters: Array<{ value: ArchiveFilter; label: string }> = [
 
       <template v-else>
         <ul class="archive-list">
-          <li v-for="item in filtered" :key="item.id" class="archive-item">
+          <li
+            v-for="(item, index) in filtered"
+            :key="item.id"
+            class="archive-item"
+            :style="{ '--i': index }"
+          >
             <span class="check">
               <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
@@ -291,6 +296,12 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   align-items: baseline;
   gap: 6px;
   padding: 10px 16px;
+  transition: transform 0.22s var(--ease), box-shadow 0.22s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
+  }
 
   strong {
     font-size: 17px;
@@ -330,8 +341,17 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
 .archive-item {
   display: flex;
   gap: 14px;
-  padding: 18px 0;
+  margin: 0 -12px;
+  padding: 18px 12px;
   border-bottom: 1px solid var(--app-line-soft);
+  border-radius: 12px;
+  transition: background 0.22s ease;
+  animation: rise-in 0.4s var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 40ms);
+
+  &:hover {
+    background: var(--chip-bg);
+  }
 
   &:last-child {
     border-bottom: none;

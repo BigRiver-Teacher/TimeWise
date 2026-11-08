@@ -204,6 +204,13 @@ $line: var(--app-line);
   flex-shrink: 0;
   border-radius: 8px;
   object-fit: contain;
+  /* 微微的悬浮感：与玻璃侧边栏呼应 */
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.28);
+  transition: transform 0.25s var(--ease);
+}
+
+.logo:hover .logo-img {
+  transform: rotate(-6deg) scale(1.06);
 }
 
 .logo-text {
@@ -246,11 +253,13 @@ $line: var(--app-line);
     font-weight: 500;
     transition:
       background 0.18s ease,
-      color 0.18s ease;
+      color 0.18s ease,
+      transform 0.18s var(--ease);
 
     &:hover {
       background: var(--chip-bg);
       color: $text;
+      transform: translateX(2px);
     }
 
     &.is-active {
@@ -265,9 +274,18 @@ $line: var(--app-line);
         top: 50%;
         width: 3px;
         height: 20px;
-        transform: translateY(-50%);
+        transform: translateY(-50%) scaleY(0.4);
         border-radius: 0 3px 3px 0;
         background: $brand;
+        opacity: 0;
+        transition:
+          transform 0.24s var(--ease),
+          opacity 0.24s ease;
+      }
+
+      &::before {
+        transform: translateY(-50%) scaleY(1);
+        opacity: 1;
       }
 
       .el-icon {
@@ -306,6 +324,18 @@ $line: var(--app-line);
   border-radius: 50%;
   background: #10b981;
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+  animation: ai-dot-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes ai-dot-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.07);
+  }
 }
 
 /* ---------------- 顶栏 ---------------- */
@@ -381,6 +411,13 @@ $line: var(--app-line);
   color: $brand;
   font-size: 12.5px;
   font-weight: 700;
+  box-shadow: 0 0 0 2px var(--glass-bg-strong),
+    0 2px 8px rgba(79, 70, 229, 0.22);
+  transition: transform 0.25s var(--ease);
+
+  &:hover {
+    transform: scale(1.08);
+  }
 }
 
 .user-name {
@@ -436,6 +473,8 @@ $line: var(--app-line);
   }
 
   .nav-item {
+    position: relative;
+    z-index: 0;
     display: flex;
     flex: 1;
     flex-direction: column;
@@ -447,6 +486,24 @@ $line: var(--app-line);
     font-weight: 500;
     transition: color 0.18s ease;
 
+    /* 激活态背后的药丸底色，比纯变色更有存在感 */
+    &::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      top: 6px;
+      bottom: 6px;
+      left: 50%;
+      width: 58px;
+      border-radius: 999px;
+      background: $brand-soft;
+      opacity: 0;
+      transform: translateX(-50%) scale(0.7);
+      transition:
+        opacity 0.22s ease,
+        transform 0.22s var(--ease);
+    }
+
     &:focus-visible {
       outline: 2px solid rgba($brand, 0.45);
       outline-offset: -2px;
@@ -455,6 +512,11 @@ $line: var(--app-line);
     &.is-active {
       color: $brand;
       font-weight: 600;
+
+      &::before {
+        opacity: 1;
+        transform: translateX(-50%) scale(1);
+      }
 
       .nav-icon {
         transform: translateY(-1px);
@@ -472,21 +534,27 @@ $line: var(--app-line);
 /* 
  * 路由切换动画：由于类名打在子页面根节点，此处不能使用 scoped
  */
-.page-fade-enter-active,
-.page-fade-leave-active {
+.page-fade-enter-active {
   transition:
-    opacity 0.3s ease,
-    transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+    opacity 0.32s ease,
+    transform 0.32s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
+.page-fade-leave-active {
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* 新页从右侧滑入并轻微上浮，旧页向左淡出：方向感更明确 */
 .page-fade-enter-from {
   opacity: 0;
-  transform: translateX(20px);
+  transform: translateX(20px) translateY(6px);
 }
 
 .page-fade-leave-to {
   opacity: 0;
-  transform: translateX(-20px);
+  transform: translateX(-16px);
 }
 
 @media (prefers-reduced-motion: reduce) {

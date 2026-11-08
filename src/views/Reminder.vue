@@ -363,10 +363,11 @@ onUnmounted(() => {
 
             <el-timeline class="reminder-timeline">
               <el-timeline-item
-                v-for="item in group.items"
+                v-for="(item, index) in group.items"
                 :key="item.id"
                 :color="group.color"
                 size="large"
+                :style="{ '--i': index }"
               >
                 <article class="reminder-card">
                   <div class="card-head">
@@ -493,8 +494,11 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   margin: 0 auto;
   padding: 22px 24px;
 
+  animation: rise-in 0.5s var(--ease) backwards;
+
   & + & {
     margin-top: 18px;
+    animation-delay: 90ms;
   }
 }
 
@@ -651,6 +655,9 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
 
   padding: 14px 16px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+
+  animation: rise-in 0.4s var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 50ms);
 
   &:hover {
     transform: translateX(2px);

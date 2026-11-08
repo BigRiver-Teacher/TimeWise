@@ -415,6 +415,24 @@ $shadow-card:
 
   padding: 22px 24px 8px;
 
+  animation: rise-in 0.45s var(--ease) backwards;
+
+  &:nth-of-type(1) {
+    animation-delay: 0ms;
+  }
+
+  &:nth-of-type(2) {
+    animation-delay: 60ms;
+  }
+
+  &:nth-of-type(3) {
+    animation-delay: 120ms;
+  }
+
+  &:nth-of-type(4) {
+    animation-delay: 180ms;
+  }
+
   & + & {
     margin-top: 16px;
   }
@@ -473,8 +491,15 @@ $shadow-card:
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 16px 0;
+  margin: 0 -12px;
+  padding: 16px 12px;
   border-top: 1px solid var(--app-line-soft);
+  border-radius: 10px;
+  transition: background 0.2s ease;
+
+  &:hover {
+    background: var(--chip-bg);
+  }
 }
 
 .setting-text {
@@ -505,11 +530,16 @@ $shadow-card:
 }
 .avatar-hover {
   border: 2px solid transparent;
-  transition: all 0.2s;
+  box-shadow: 0 2px 10px rgba(79, 70, 229, 0.18);
+  transition:
+    border-color 0.2s ease,
+    transform 0.25s var(--ease),
+    box-shadow 0.25s ease;
 }
 .avatar-uploader:hover .avatar-hover {
   border-color: $brand;
   transform: scale(1.05);
+  box-shadow: 0 6px 18px -6px rgba(79, 70, 229, 0.45);
 }
 
 @media (max-width: 720px) {

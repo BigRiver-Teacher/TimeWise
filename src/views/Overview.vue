@@ -461,9 +461,10 @@ const pageSubtitle = computed(() =>
         <!-- 卡片视图 -->
         <div v-if="viewMode === 'card'" class="memo-grid">
           <article
-            v-for="memo in filteredMemos"
+            v-for="(memo, index) in filteredMemos"
             :key="memo.id"
             class="memo-card"
+            :style="{ '--i': index }"
             :class="[
               `is-${memo.priority}`,
               {
@@ -549,9 +550,10 @@ const pageSubtitle = computed(() =>
         <!-- 时间轴视图 -->
         <ol v-else class="memo-timeline">
           <li
-            v-for="memo in filteredMemos"
+            v-for="(memo, index) in filteredMemos"
             :key="memo.id"
             class="timeline-item"
+            :style="{ '--i': index }"
           >
             <i
               class="timeline-dot"
@@ -727,12 +729,15 @@ $shadow-hover:
   height: 40px;
   margin-left: 0;
   border: 1px solid $line;
-  background: $surface;
+  background: var(--glass-bg);
   color: $text-muted;
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
   transition:
     color 0.2s ease,
     border-color 0.2s ease,
-    background 0.2s ease;
+    background 0.2s ease,
+    transform 0.2s var(--ease);
 
   .icon {
     width: 17px;
@@ -743,6 +748,11 @@ $shadow-hover:
     border-color: rgba($brand, 0.35);
     background: $brand-soft;
     color: $brand;
+    transform: translateY(-1px);
+  }
+
+  &:active {
+    transform: scale(0.94);
   }
 }
 
@@ -763,6 +773,11 @@ $shadow-hover:
   &:hover {
     transform: translateY(-1px);
     box-shadow: 0 10px 20px -8px rgba($brand, 0.7);
+  }
+
+  &:active {
+    transform: translateY(0) scale(0.97);
+    transition-duration: 0.1s;
   }
 }
 
@@ -785,6 +800,22 @@ $shadow-hover:
   transition:
     box-shadow 0.22s ease,
     transform 0.22s ease;
+
+  /* 三张统计卡错峰上浮入场 */
+  animation: rise-in 0.5s var(--ease) backwards;
+  animation-delay: calc(var(--stat-i, 0) * 70ms);
+
+  &:nth-child(1) {
+    --stat-i: 0;
+  }
+
+  &:nth-child(2) {
+    --stat-i: 1;
+  }
+
+  &:nth-child(3) {
+    --stat-i: 2;
+  }
 
   &:hover {
     transform: translateY(-2px);
@@ -989,10 +1020,19 @@ $shadow-hover:
     box-shadow 0.22s ease,
     border-color 0.22s ease;
 
+  /* 列表错峰入场；backwards 保证动画结束不占用 transform，悬停位移不受影响 */
+  animation: rise-in 0.45s var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 45ms);
+
   &:hover {
     transform: translateY(-3px);
     border-color: rgba($brand, 0.28);
     box-shadow: $shadow-hover;
+  }
+
+  &:active {
+    transform: translateY(-1px) scale(0.995);
+    transition-duration: 0.1s;
   }
 
   &:focus-visible {
@@ -1238,6 +1278,9 @@ html.dark .memo-card.is-overdue {
 .timeline-item {
   position: relative;
   padding-left: 34px;
+
+  animation: rise-in 0.4s var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 40ms);
 
   & + & {
     margin-top: 12px;

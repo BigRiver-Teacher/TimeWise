@@ -923,10 +923,18 @@ $shadow-card:
   border-radius: $radius-md;
   font-weight: 600;
   box-shadow: 0 6px 16px -8px rgba($brand, 0.7);
+  transition:
+    transform 0.2s var(--ease),
+    box-shadow 0.2s ease;
 
   &:hover {
     transform: translateY(-1px);
     box-shadow: 0 10px 22px -10px rgba($brand, 0.8);
+  }
+
+  &:active {
+    transform: translateY(0) scale(0.98);
+    transition-duration: 0.1s;
   }
 }
 
@@ -945,6 +953,20 @@ $shadow-card:
   -webkit-backdrop-filter: blur(var(--glass-blur));
 
   padding: 22px 24px 24px;
+
+  animation: rise-in 0.5s var(--ease) backwards;
+
+  &:nth-of-type(1) {
+    animation-delay: 0ms;
+  }
+
+  &:nth-of-type(2) {
+    animation-delay: 80ms;
+  }
+
+  &:nth-of-type(3) {
+    animation-delay: 160ms;
+  }
 
   & + & {
     margin-top: 18px;
@@ -1086,6 +1108,17 @@ $shadow-card:
   flex-direction: column;
   padding: 18px 20px;
   border-radius: $radius-md;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.source-col:hover {
+  border-color: var(--app-text-subtle);
+  box-shadow: var(--shadow-sm);
+}
+
+.summary-col:hover {
+  border-color: rgba($ai, 0.55);
+  box-shadow: 0 8px 20px -14px rgba($ai, 0.5);
 }
 
 .source-col {
@@ -1378,7 +1411,14 @@ $shadow-card:
   color: var(--app-text-muted);
   transition:
     border-color 0.2s ease,
-    background 0.2s ease;
+    background 0.2s ease,
+    transform 0.2s var(--ease),
+    box-shadow 0.2s ease;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
 
   .icon {
     width: 13px;
