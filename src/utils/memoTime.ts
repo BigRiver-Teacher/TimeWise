@@ -6,6 +6,12 @@ function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
 
+/**
+ * 文本里没有具体时刻时的兜底小时：上午 10 点。
+ * 用 00:00 会让「明天」（也就是明天刚过零点）立刻变成已过期，用 10:00 更接近真实使用习惯。
+ */
+const DEFAULT_HOUR = 10;
+
 /* ---------------------------- 一、中文数字 → 阿拉伯数字 ---------------------------- */
 
 /** 中文数字字符 → 数值（只覆盖 0-99 里会用到的个位，「两」按 2 算） */
@@ -218,6 +224,7 @@ function weekdayOffset(text: string, today: Date): number | null {
  *  - 时刻：18:30 / 9：30 / 8点 / 8点半 / 9点30分 / 中文数字「两点」「十点」
  *  - 时段：下午两点 → 14:00、晚上八点 → 20:00、上午九点 → 09:00
  *
+ * 只写了日期、没写时刻时（如「明天」「2026年11月15日」）统一按当天 10:00:00 处理；
  * 没有日期线索时以「今天」为基准；既没有日期也没有时刻（如「本周内」「尽快」）返回 null。
  */
 export function parseMemoTime(raw: string): Date | null {
@@ -261,8 +268,8 @@ export function parseMemoTime(raw: string): Date | null {
     }
   }
 
-  /* ---------- ③-3 时段修正：下午两点 → 14 点 ---------- */
-  const hour = clock ? applyPeriod(text, clock.hour) : 0;
+  /* ---------- ③-3 时段修正：下午两点 → 14 点；没写时刻则兜底 10:00 ---------- */
+  const hour = clock ? applyPeriod(text, clock.hour) : DEFAULT_HOUR;
   const minute = clock ? clock.minute : 0;
   const second = clock ? clock.second : 0;
 

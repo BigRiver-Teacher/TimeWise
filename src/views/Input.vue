@@ -5,6 +5,7 @@ import { ElMessage } from "element-plus";
 import type { UploadFile, UploadUserFile } from "element-plus";
 import { useMemoStore } from "@/stores/memo";
 import { useSettingsStore } from "@/stores/settings";
+import { toDateKey, toStandardTime } from "@/utils/memoTime";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import mammoth from "mammoth";
@@ -820,9 +821,15 @@ async function saveToTodo(): Promise<void> {
         ? extracted.value.content
         : noticeText.value.trim();
 
+    // AI 提取的时间可能是「明天下午两点」这类相对说法，必须先换算成绝对时间再入库：
+    // 否则库里存的相对词永远不会「变旧」，首页的逾期判断和提醒都会失效。
+    // 解析不出来（或为空）时兜底成「今天的 10:00:00」，不能用 00:00:00。
+    const standardTime =
+      toStandardTime(result.time) || `${toDateKey(new Date())} 10:00:00`;
+
     await memoStore.addMemo({
       title: result.title,
-      time: result.time,
+      time: standardTime,
       priority: result.priority,
       type: result.type,
       aiSummary: result.aiSummary,
@@ -1217,15 +1224,37 @@ const statusClass = computed(() => {
 </template>
 
 <style scoped lang="scss">
-/* 主色沿用全局靛蓝；AI 紫只用在 AI 相关的点缀上 */
-.input-page {
-  --el-text-color-regular: var(--app-text);
-  --el-border-radius-base: var(--radius-sm);
+$ai: #8b5cf6;
+$ai-deep: #7c3aed;
+$ai-soft: var(--ai-soft);
+$text: var(--app-text);
+$text-muted: var(--app-text-muted);
+$text-subtle: var(--app-text-subtle);
+$bg: var(--app-bg);
+$surface: var(--app-surface);
+$line: var(--app-line);
+$radius-lg: 16px;
+$radius-md: 12px;
+$radius-sm: 8px;
+$shadow-card:
+  0 1px 2px rgba(16, 24, 40, 0.04),
+  0 1px 3px rgba(16, 24, 40, 0.06);
+$shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
 
-  max-width: var(--content-max);
-  margin: 0 auto;
-  color: var(--app-text);
-  font-size: var(--fs-base);
+/* 本页的主色是 AI 紫，仅作用于页面作用域 */
+.input-page {
+  --el-color-primary: #{$ai};
+  --el-color-primary-light-3: #a687f8;
+  --el-color-primary-light-5: #c0a9fa;
+  --el-color-primary-light-7: #dacdfc;
+  --el-color-primary-light-8: #e7defd;
+  --el-color-primary-light-9: #f3effe;
+  --el-color-primary-dark-2: #6f3bdd;
+  --el-text-color-regular: #{$text};
+  --el-border-radius-base: #{$radius-sm};
+
+  color: $text;
+  font-size: 14px;
 }
 
 .icon {
@@ -1236,45 +1265,68 @@ const statusClass = computed(() => {
 
 /* ---------------- 顶部 ---------------- */
 .page-head {
-  margin-bottom: 24px;
+  max-width: 1200px;
+  margin: 0 auto 22px;
 }
 
 .page-title {
-  @include page-title;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: $text;
 }
 
 .page-subtitle {
-  @include page-subtitle;
+  margin-top: 6px;
+  font-size: 13.5px;
+  color: $text-muted;
 }
 
 /* ---------------- 工作区 ---------------- */
 .workbench {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
-  gap: 16px;
+  gap: 20px;
   align-items: start;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .panel {
-  @include glass-panel;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+
+  padding: 22px 24px 24px;
 }
 
 .panel-head {
-  @include panel-head;
-  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .panel-icon {
-  @include panel-icon(brand);
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--brand-soft);
+  color: #4f46e5;
 
   .icon {
-    width: 18px;
-    height: 18px;
+    width: 19px;
+    height: 19px;
   }
 
   &.is-ai {
-    background: tint(ai, 14%);
-    color: var(--ai);
+    background: linear-gradient(135deg, rgba($ai, 0.14), rgba($ai, 0.06));
+    color: $ai;
   }
 }
 
@@ -1283,11 +1335,16 @@ const statusClass = computed(() => {
 }
 
 .panel-title {
-  @include panel-title;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: $text;
 }
 
 .panel-sub {
-  @include panel-sub;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: $text-subtle;
 }
 
 /* ---------------- 表单字段 ---------------- */
@@ -1303,37 +1360,37 @@ const statusClass = computed(() => {
 }
 
 .field-label {
-  font-size: var(--fs-sm);
+  font-size: 13px;
   font-weight: 600;
   color: var(--app-text);
 }
 
 .field-hint {
-  font-size: var(--fs-xs);
-  color: var(--app-text-subtle);
+  font-size: 12px;
+  color: $text-subtle;
 }
 
 .input-panel :deep(.el-textarea__inner) {
-  padding: 14px 16px 28px;
-  border-radius: var(--radius-md);
+  border-radius: $radius-md;
   background: var(--input-bg);
-  color: var(--app-text);
-  font-size: var(--fs-base);
+  color: $text;
+  font-size: 14px;
   line-height: 1.75;
-  box-shadow: 0 0 0 1px var(--app-line) inset;
+  padding: 14px 16px 26px;
+  box-shadow: 0 0 0 1px $line inset;
   resize: none;
-  @include transition(box-shadow, background);
+  transition: box-shadow 0.2s ease;
 
   &::placeholder {
     color: var(--app-text-subtle);
   }
 
   &:hover {
-    box-shadow: 0 0 0 1px tint(brand, 40%) inset;
+    box-shadow: 0 0 0 1px var(--app-line) inset;
   }
 
   &:focus {
-    box-shadow: 0 0 0 1px var(--brand) inset, 0 0 0 4px tint(brand, 14%);
+    box-shadow: 0 0 0 2px rgba($ai, 0.35) inset;
   }
 }
 
@@ -1341,8 +1398,8 @@ const statusClass = computed(() => {
   right: 14px;
   bottom: 8px;
   background: transparent;
-  color: var(--app-text-subtle);
-  font-size: var(--fs-xs);
+  color: $text-subtle;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1357,32 +1414,24 @@ const statusClass = computed(() => {
 
 .uploader :deep(.el-upload-dragger) {
   width: 100%;
-  padding: 28px 20px;
-  border: 1px dashed tint(ai, 35%);
-  border-radius: var(--radius-md);
+  padding: 26px 18px;
+  border: 1px dashed #d9d3f0;
+  border-radius: 14px;
   background: var(--input-bg);
-  @include transition(border-color, background, box-shadow);
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
 
   &:hover {
-    border-color: tint(ai, 65%);
-    background: tint(ai, 5%);
+    border-color: rgba($ai, 0.6);
+    background: var(--input-bg);
   }
 
   &.is-dragover {
-    border-color: var(--ai);
+    border-color: $ai;
     border-style: solid;
-    background: var(--ai-soft);
-    box-shadow: 0 0 0 4px var(--ai-soft), 0 8px 24px -12px var(--ai);
+    background: rgba(237, 233, 255, 0.7);
   }
-
-  &:active {
-    transform: scale(0.99);
-  }
-}
-
-.uploader :deep(.el-upload:focus-visible .el-upload-dragger) {
-  border-color: var(--ai);
-  box-shadow: 0 0 0 3px var(--brand-ring);
 }
 
 .upload-inner {
@@ -1398,43 +1447,38 @@ const statusClass = computed(() => {
   width: 40px;
   height: 40px;
   margin-bottom: 4px;
-  border-radius: var(--radius-pill);
-  background: tint(ai, 12%);
-  color: var(--ai);
-  @include transition(transform);
+  border-radius: 50%;
+  background: rgba($ai, 0.1);
+  color: $ai;
 
   .icon {
-    width: 20px;
-    height: 20px;
+    width: 19px;
+    height: 19px;
   }
 }
 
-.uploader :deep(.el-upload-dragger:hover) .upload-icon {
-  transform: translateY(-2px);
-}
-
 .upload-title {
-  font-size: var(--fs-base);
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--app-text);
 }
 
 .upload-ai {
-  color: var(--ai);
+  color: $ai;
 }
 
 .upload-hint {
-  font-size: var(--fs-xs);
-  color: var(--app-text-subtle);
+  font-size: 12px;
+  color: $text-subtle;
 }
 
 .uploader :deep(.el-upload-list) {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .uploader :deep(.el-upload-list__item) {
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-sm);
+  border-radius: $radius-sm;
+  font-size: 13px;
   color: var(--app-text-muted);
 }
 
@@ -1444,20 +1488,19 @@ const statusClass = computed(() => {
   align-items: center;
   gap: 6px;
   margin-left: auto;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
   font-weight: 600;
-  @include transition(background, color);
 
   &.is-idle {
     background: var(--chip-bg);
-    color: var(--app-text-muted);
+    color: $text-muted;
   }
 
   &.is-processing {
-    background: tint(ai, 14%);
-    color: var(--ai-text);
+    background: rgba($ai, 0.12);
+    color: $ai-deep;
   }
 
   &.is-done {
@@ -1469,7 +1512,7 @@ const statusClass = computed(() => {
 .status-dot {
   width: 6px;
   height: 6px;
-  border-radius: var(--radius-pill);
+  border-radius: 50%;
   background: currentColor;
   animation: pulse 1.1s ease-in-out infinite;
 }
@@ -1488,47 +1531,41 @@ const statusClass = computed(() => {
 }
 
 .ai-steps {
-  margin-top: 24px;
+  margin-top: 22px;
 
   :deep(.el-step__title) {
-    font-size: var(--fs-sm);
+    font-size: 13.5px;
     font-weight: 600;
     line-height: 1.5;
   }
 
   :deep(.el-step__description) {
     padding-right: 8px;
-    font-size: var(--fs-xs);
-    color: var(--app-text-subtle);
+    font-size: 12px;
+    color: $text-subtle;
     line-height: 1.6;
   }
 
   :deep(.el-step__head.is-wait) {
-    color: var(--app-text-subtle);
+    color: var(--app-line);
     border-color: var(--app-line);
   }
 
   :deep(.el-step__title.is-wait) {
-    color: var(--app-text-muted);
+    color: $text-muted;
   }
 
   :deep(.el-step__head.is-process) {
-    color: var(--ai);
-    border-color: var(--ai);
+    color: $ai;
+    border-color: $ai;
   }
 
   :deep(.el-step__title.is-process) {
-    color: var(--ai-text);
+    color: $ai-deep;
   }
 
-  :deep(.el-step__head.is-success) {
-    color: var(--success);
-    border-color: var(--success);
-  }
-
-  :deep(.el-step__title.is-success),
   :deep(.el-step__title.is-finish) {
-    color: var(--app-text);
+    color: $text;
   }
 
   :deep(.el-step__line) {
@@ -1538,20 +1575,18 @@ const statusClass = computed(() => {
   :deep(.el-step__icon) {
     width: 24px;
     height: 24px;
-    font-size: var(--fs-xs);
-    background: var(--surface-inner);
+    font-size: 12px;
+    background: $surface;
   }
 }
 
 /* ---------------- 进度 ---------------- */
 .progress-block {
-  @include inner-card(false);
-  margin-top: 24px;
+  margin-top: 22px;
   padding: 16px;
-  border-color: tint(ai, 24%);
-  background:
-    linear-gradient(180deg, tint(ai, 8%), tint(ai, 2%)),
-    var(--surface-inner);
+  border: 1px solid rgba($ai, 0.2);
+  border-radius: $radius-md;
+  background: linear-gradient(180deg, rgba($ai, 0.06), rgba($ai, 0.02));
 }
 
 .progress-meta {
@@ -1559,63 +1594,61 @@ const statusClass = computed(() => {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .progress-label {
-  font-size: var(--fs-sm);
+  font-size: 13px;
   font-weight: 600;
   color: var(--ai-text);
 }
 
 .progress-value {
-  font-size: var(--fs-md);
+  font-size: 15px;
   font-weight: 700;
-  color: var(--ai-text);
+  color: $ai-deep;
   font-variant-numeric: tabular-nums;
 }
 
 .progress-block :deep(.el-progress-bar__outer) {
-  background-color: var(--app-line-soft);
+  background-color: #ece9f7;
 }
 
 .progress-block :deep(.el-progress-bar__inner) {
-  background-image: var(--ai-gradient);
+  background-image: linear-gradient(90deg, $ai, #a78bfa);
   transition: width 0.18s linear;
 }
 
 .progress-hint {
-  margin-top: 12px;
-  font-size: var(--fs-xs);
-  color: var(--app-text-subtle);
+  margin-top: 10px;
+  font-size: 12px;
+  color: $text-subtle;
 }
 
 /* ---------------- 结果 ---------------- */
 .result-block {
-  @include inner-card(false);
-  margin-top: 24px;
+  margin-top: 22px;
   padding: 16px;
-  border-color: tint(success, 28%);
-  background:
-    linear-gradient(var(--success-soft), var(--success-soft)),
-    var(--surface-inner);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  border-radius: $radius-md;
+  background: rgba(236, 253, 245, 0.55);
 }
 
 .result-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .result-check {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
-  border-radius: var(--radius-pill);
-  background: tint(success, 18%);
-  color: var(--success);
+  border-radius: 50%;
+  background: var(--success-soft);
+  color: #10b981;
 
   .icon {
     width: 16px;
@@ -1624,48 +1657,42 @@ const statusClass = computed(() => {
 }
 
 .result-title {
-  font-size: var(--fs-base);
+  font-size: 13.5px;
   font-weight: 700;
   color: var(--success-text);
 }
 
 .result-sub {
   margin-top: 2px;
-  font-size: var(--fs-xs);
-  color: var(--app-text-muted);
+  font-size: 12px;
+  color: $text-muted;
+}
+
+.again-btn {
+  margin-top: 4px;
+  padding-left: 0;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 .result-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 16px;
+  gap: 10px;
+  margin-top: 12px;
 }
 
-.again-btn {
-  padding: 0 12px;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  @include transition(background, transform);
-
-  &:hover,
-  &:focus-visible {
-    background: var(--brand-soft);
-  }
-
-  &:active {
-    transform: scale(0.98);
-  }
+.result-actions .again-btn {
+  margin-top: 0;
 }
 
 .save-btn {
   flex: 1;
   min-width: 0;
   height: 38px;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-sm);
+  border-radius: 10px;
+  font-size: 13px;
   font-weight: 600;
-  @include lift-button;
 }
 
 /* ---------------- 文档提取状态 ---------------- */
@@ -1673,34 +1700,32 @@ const statusClass = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 10px;
   padding: 8px 12px;
   border: 1px solid var(--app-line);
-  border-radius: var(--radius-sm);
+  border-radius: $radius-sm;
   background: var(--chip-bg);
-  font-size: var(--fs-sm);
-  color: var(--app-text-muted);
-  @include transition(border-color, background);
+  font-size: 12.5px;
+  color: $text-muted;
 
   .source-dot {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     flex-shrink: 0;
-    border-radius: var(--radius-pill);
-    background: var(--app-text-subtle);
+    border-radius: 50%;
+    background: $text-subtle;
   }
 
   &.is-reading .source-dot {
-    background: var(--ai);
+    background: $ai;
     animation: pulse 1.1s ease-in-out infinite;
   }
 
   &.is-ready {
-    border-color: tint(success, 30%);
-    background: var(--success-soft);
+    border-color: rgba(16, 185, 129, 0.3);
 
     .source-dot {
-      background: var(--success);
+      background: #10b981;
     }
 
     .source-text {
@@ -1709,15 +1734,14 @@ const statusClass = computed(() => {
   }
 
   &.is-error {
-    border-color: tint(danger, 32%);
-    background: var(--danger-soft);
+    border-color: rgba(239, 68, 68, 0.32);
 
     .source-dot {
-      background: var(--danger);
+      background: #ef4444;
     }
 
     .source-text {
-      color: var(--danger);
+      color: #ef4444;
     }
   }
 }
@@ -1730,15 +1754,15 @@ const statusClass = computed(() => {
 }
 
 .source-preview {
-  max-height: 96px;
   margin-top: 8px;
   padding: 10px 12px;
+  max-height: 96px;
   overflow: auto;
   border: 1px dashed var(--app-line);
-  border-radius: var(--radius-sm);
+  border-radius: $radius-sm;
   background: var(--input-bg);
-  color: var(--app-text-subtle);
-  font-size: var(--fs-xs);
+  color: $text-subtle;
+  font-size: 12px;
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1746,38 +1770,38 @@ const statusClass = computed(() => {
 
 /* ---------------- 解析结果详情 ---------------- */
 .result-summary {
-  margin-top: 12px;
-  font-size: var(--fs-sm);
+  margin-top: 10px;
+  font-size: 12.5px;
   line-height: 1.7;
-  color: var(--app-text-muted);
+  color: $text-muted;
 }
 
 .result-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .result-chip {
-  padding: 2px 10px;
+  padding: 2px 9px;
   border: 1px solid var(--app-line);
-  border-radius: var(--radius-pill);
-  background: var(--surface-inner);
-  color: var(--app-text-muted);
-  font-size: var(--fs-xs);
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: $text-muted;
+  font-size: 11.5px;
   font-weight: 500;
 }
 
 .result-field {
-  margin-top: 12px;
-  font-size: var(--fs-sm);
-  color: var(--app-text);
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: $text;
 }
 
 .result-field-label {
   margin-right: 8px;
-  color: var(--app-text-subtle);
+  color: $text-subtle;
 }
 
 .result-points {
@@ -1787,62 +1811,52 @@ const statusClass = computed(() => {
 
   li {
     position: relative;
-    padding-left: 14px;
-    font-size: var(--fs-sm);
+    padding-left: 13px;
+    font-size: 12px;
     line-height: 1.85;
-    color: var(--app-text-muted);
+    color: $text-muted;
 
     &::before {
       content: "";
       position: absolute;
-      top: 10px;
+      top: 8px;
       left: 2px;
-      width: 5px;
-      height: 5px;
-      border-radius: var(--radius-pill);
-      background: tint(ai, 70%);
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: rgba($ai, 0.7);
     }
   }
 }
 
 .result-source {
-  margin-top: 12px;
-  font-size: var(--fs-xs);
-  color: var(--app-text-subtle);
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: $text-subtle;
 }
 
 .result-json {
   margin-top: 8px;
-  font-size: var(--fs-xs);
-  color: var(--app-text-muted);
+  font-size: 12px;
+  color: $text-muted;
 
   summary {
-    display: inline-block;
-    padding: 2px 4px;
-    border-radius: var(--radius-sm);
-    color: var(--ai-text);
-    font-size: var(--fs-xs);
-    font-weight: 600;
     cursor: pointer;
-    @include transition(background);
-
-    &:hover {
-      background: tint(ai, 10%);
-    }
-
-    @include focus-ring;
+    color: $ai-deep;
+    font-size: 12px;
+    font-weight: 600;
   }
 
   pre {
-    max-height: 180px;
     margin-top: 8px;
     padding: 10px 12px;
+    max-height: 180px;
     overflow: auto;
     border: 1px solid var(--app-line);
-    border-radius: var(--radius-sm);
+    border-radius: $radius-sm;
     background: var(--input-bg);
-    color: var(--app-text-muted);
-    font-size: var(--fs-xs);
+    color: $text-muted;
+    font-size: 11.5px;
     line-height: 1.65;
   }
 }
@@ -1854,23 +1868,23 @@ const statusClass = computed(() => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin-top: 24px;
+  margin-top: 22px;
   padding: 24px 16px;
-  border: 1px dashed var(--app-line);
-  border-radius: var(--radius-md);
+  border: 1px dashed rgba(226, 225, 234, 0.9);
+  border-radius: $radius-md;
   background: var(--input-bg);
   text-align: center;
-  color: var(--app-text-subtle);
-  font-size: var(--fs-sm);
+  color: $text-subtle;
+  font-size: 12.5px;
   line-height: 1.6;
 }
 
 .idle-icon {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-pill);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
   background: var(--chip-bg);
   color: var(--app-text-subtle);
 
@@ -1880,89 +1894,73 @@ const statusClass = computed(() => {
   }
 }
 
-/* 进度 / 结果 / 空闲 切换 */
-.fade-enter-active,
-.fade-leave-active {
-  transition:
-    opacity var(--dur) var(--ease),
-    transform var(--dur) var(--ease);
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-  transform: translateY(6px);
-}
-
 /* ---------------- 底部操作 ---------------- */
 .action-bar {
-  @include glass-panel(16px 20px);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-top: 16px;
+  max-width: 1200px;
+  margin: 20px auto 0;
+  padding: 16px 20px;
 }
 
 .action-hint {
-  font-size: var(--fs-sm);
-  color: var(--app-text-muted);
+  font-size: 12.5px;
+  color: $text-muted;
 }
 
 .inline-link {
-  border-radius: var(--radius-sm);
-  color: var(--brand);
+  color: $ai-deep;
   font-weight: 600;
-  text-underline-offset: 3px;
-  @include transition(color);
 
   &:hover {
-    color: var(--brand-hover);
     text-decoration: underline;
   }
-
-  @include focus-ring;
 }
 
-/* 「开始智能解析」是 AI 动作，保留 AI 紫渐变 */
 .parse-btn {
   min-width: 168px;
   height: 44px;
   border: none;
-  border-radius: var(--radius-md);
-  background: var(--ai-gradient);
-  font-size: var(--fs-base);
+  border-radius: $radius-md;
+  background: linear-gradient(135deg, $ai, $ai-deep);
+  font-size: 14.5px;
   font-weight: 600;
-  box-shadow: 0 6px 16px -8px tint(ai, 70%);
-  @include transition(transform, box-shadow, filter);
+  box-shadow: 0 8px 18px -8px rgba($ai, 0.75);
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    filter 0.2s ease;
 
   .icon {
     width: 16px;
     height: 16px;
-    margin-right: 8px;
+    margin-right: 7px;
   }
 
-  &:hover:not(.is-disabled),
-  &:focus-visible {
-    background: var(--ai-gradient);
-    filter: brightness(1.06);
+  &:hover:not(.is-disabled) {
+    background: linear-gradient(135deg, #9668f7, #6f3bdd);
     transform: translateY(-1px);
-    box-shadow: 0 10px 22px -10px tint(ai, 80%);
-  }
-
-  &:active:not(.is-disabled) {
-    transform: translateY(0);
+    box-shadow: 0 12px 24px -10px rgba($ai, 0.8);
   }
 
   &.is-disabled {
     box-shadow: none;
-    opacity: 0.5;
+    opacity: 0.6;
   }
 }
 
 /* ---------------- 响应式 ---------------- */
-@include tablet {
+@media (max-width: 1024px) {
   .workbench {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1972,9 +1970,9 @@ const statusClass = computed(() => {
   }
 }
 
-@include mobile {
+@media (max-width: 720px) {
   .panel {
-    padding: 20px 16px;
+    padding: 18px;
   }
 
   .action-bar {

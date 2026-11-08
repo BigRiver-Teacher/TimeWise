@@ -150,10 +150,51 @@ function checkUpcomingMemos(): void {
   }
 }
 
+/* ---------------------------- 背景图标鼠标视差 ---------------------------- */
+/** 位移缩放：鼠标从屏幕中心移动半个屏幕，图标大约偏移 10~20px */
+const PARALLAX_DIVISOR = 50;
+
+let parallaxFrame = 0;
+let parallaxX = 0;
+let parallaxY = 0;
+const reduceMotionQuery =
+  typeof window !== "undefined"
+    ? window.matchMedia("(prefers-reduced-motion: reduce)")
+    : undefined;
+
+/** 系统是否要求「减少动效」：是则完全不参与视差 */
+function isReducedMotion(): boolean {
+  return reduceMotionQuery?.matches ?? false;
+}
+
+/** 把最新位移写进 CSS 变量（一帧只写一次，避免高频重排） */
+function flushParallax(): void {
+  parallaxFrame = 0;
+  const root = document.documentElement;
+  root.style.setProperty("--mouse-x", `${parallaxX.toFixed(2)}px`);
+  root.style.setProperty("--mouse-y", `${parallaxY.toFixed(2)}px`);
+}
+
+/** 鼠标移动：算出相对屏幕中心的偏移，交给 rAF 合并成一次写入 */
+function handlePointerMove(event: MouseEvent): void {
+  if (isReducedMotion()) return;
+
+  parallaxX = (event.clientX - window.innerWidth / 2) / PARALLAX_DIVISOR;
+  parallaxY = (event.clientY - window.innerHeight / 2) / PARALLAX_DIVISOR;
+
+  if (parallaxFrame === 0) parallaxFrame = requestAnimationFrame(flushParallax);
+}
+
 onMounted(() => {
   void requestNotificationPermission();
   checkUpcomingMemos();
   reminderTimer = setInterval(checkUpcomingMemos, CHECK_INTERVAL_MS);
+
+  // 背景图标视差：只有系统允许动效时才监听
+  if (!isReducedMotion()) {
+    // passive：不阻断页面滚动
+    window.addEventListener("mousemove", handlePointerMove, { passive: true });
+  }
 });
 
 onUnmounted(() => {
@@ -161,6 +202,13 @@ onUnmounted(() => {
   if (reminderTimer) {
     clearInterval(reminderTimer);
     reminderTimer = undefined;
+  }
+
+  // 清理视差监听与未执行完的动画帧
+  window.removeEventListener("mousemove", handlePointerMove);
+  if (parallaxFrame) {
+    cancelAnimationFrame(parallaxFrame);
+    parallaxFrame = 0;
   }
 });
 </script>
@@ -202,6 +250,14 @@ onUnmounted(() => {
   animation: float-1 18s ease-in-out infinite;
   will-change: transform;
 
+  /*
+   * 鼠标视差：用独立的 translate 属性而不是 transform，
+   * 这样能和上面 float 动画（改的是 transform）叠加，不会互相覆盖。
+   * --parallax-factor 由每个图标单独给值：大图标小、小图标大，才有远近层次。
+   */
+  translate: calc(var(--mouse-x, 0px) * var(--parallax-factor, 0.5))
+    calc(var(--mouse-y, 0px) * var(--parallax-factor, 0.5));
+
   :deep(svg) {
     display: block;
     width: 100%;
@@ -209,8 +265,10 @@ onUnmounted(() => {
   }
 }
 
-/* 位置 / 尺寸 / 颜色 / 动画各自错开，形成自然漂浮感 */
+/* 位置 / 尺寸 / 颜色 / 动画各自错开，形成自然漂浮感；
+   --parallax-factor 决定视差幅度：越大的图标给出越小的系数（感觉更远） */
 .icon-1 {
+  --parallax-factor: 0.5;
   top: 8%;
   left: 12%;
   width: 72px;
@@ -220,6 +278,7 @@ onUnmounted(() => {
 }
 
 .icon-2 {
+  --parallax-factor: 0.3;
   top: 14%;
   right: 10%;
   width: 108px;
@@ -230,6 +289,7 @@ onUnmounted(() => {
 }
 
 .icon-3 {
+  --parallax-factor: 0.75;
   top: 38%;
   left: 5%;
   width: 56px;
@@ -240,6 +300,7 @@ onUnmounted(() => {
 }
 
 .icon-4 {
+  --parallax-factor: 0.25;
   top: 44%;
   right: 14%;
   width: 120px;
@@ -250,6 +311,7 @@ onUnmounted(() => {
 }
 
 .icon-5 {
+  --parallax-factor: 0.4;
   bottom: 16%;
   left: 24%;
   width: 88px;
@@ -260,6 +322,7 @@ onUnmounted(() => {
 }
 
 .icon-6 {
+  --parallax-factor: 0.6;
   right: 8%;
   bottom: 6%;
   width: 64px;
@@ -270,6 +333,7 @@ onUnmounted(() => {
 }
 
 .icon-7 {
+  --parallax-factor: 0.85;
   top: 66%;
   left: 48%;
   width: 44px;
@@ -280,6 +344,7 @@ onUnmounted(() => {
 }
 
 .icon-8 {
+  --parallax-factor: 1;
   top: 5%;
   left: 54%;
   width: 40px;
@@ -348,6 +413,8 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .bg-icon {
     animation: none;
+    /* 关掉动效偏好时也不跟鼠标位移，避免视觉晃动 */
+    translate: none;
   }
 }
 </style>

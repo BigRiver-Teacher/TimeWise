@@ -127,7 +127,11 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
       </header>
 
       <main class="content">
-        <RouterView />
+        <RouterView v-slot="{ Component }">
+          <Transition name="page-fade" mode="out-in">
+            <component :is="Component" />
+          </Transition>
+        </RouterView>
       </main>
     </div>
 
@@ -148,11 +152,26 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
 </template>
 
 <style scoped lang="scss">
+$brand: #4f46e5;
+$brand-soft: var(--brand-soft);
+$text: var(--app-text);
+$text-muted: var(--app-text-muted);
+$text-subtle: var(--app-text-subtle);
+$bg: var(--app-bg);
+$surface: var(--app-surface);
+$line: var(--app-line);
+
 .layout {
   display: flex;
   min-height: 100vh;
   background: transparent;
-  color: var(--app-text);
+  color: $text;
+}
+
+.icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 
 /* ---------------- 侧边栏 ---------------- */
@@ -194,10 +213,10 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
 }
 
 .logo-title {
-  font-size: var(--fs-md);
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: -0.01em;
-  color: var(--app-text);
+  color: $text;
 }
 
 .logo-sub {
@@ -206,12 +225,12 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
   font-weight: 500;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--app-text-subtle);
+  color: $text-subtle;
 }
 
 .side-menu {
   flex: 1;
-  padding: 8px 0;
+  padding: 6px 0;
   border-right: none;
   background: transparent;
   overflow-y: auto;
@@ -221,20 +240,22 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
     height: 44px;
     margin: 4px 12px;
     padding: 0 12px !important;
-    border-radius: var(--radius-md);
+    border-radius: 10px;
     color: var(--app-text-muted);
-    font-size: var(--fs-sm);
+    font-size: 13.5px;
     font-weight: 500;
-    @include transition(background, color);
+    transition:
+      background 0.18s ease,
+      color 0.18s ease;
 
     &:hover {
       background: var(--chip-bg);
-      color: var(--app-text);
+      color: $text;
     }
 
     &.is-active {
-      background: var(--brand-soft);
-      color: var(--brand);
+      background: $brand-soft;
+      color: $brand;
       font-weight: 600;
 
       &::before {
@@ -246,19 +267,19 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
         height: 20px;
         transform: translateY(-50%);
         border-radius: 0 3px 3px 0;
-        background: var(--brand);
+        background: $brand;
       }
 
       .el-icon {
-        color: var(--brand);
+        color: $brand;
       }
     }
   }
 
   :deep(.el-icon) {
     margin-right: 10px;
-    font-size: 18px;
-    color: var(--app-text-subtle);
+    font-size: 17px;
+    color: $text-subtle;
   }
 }
 
@@ -269,16 +290,22 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
   margin: 12px;
   padding: 10px 12px;
   flex-shrink: 0;
-  border: 1px solid tint(success, 28%);
-  border-radius: var(--radius-md);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  border-radius: 12px;
   background: var(--success-soft);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: var(--success-text);
-  font-size: var(--fs-xs);
+  font-size: 11.5px;
   font-weight: 500;
 }
 
 .ai-dot {
-  @include status-dot(success);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
 }
 
 /* ---------------- 顶栏 ---------------- */
@@ -310,22 +337,21 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--fs-sm);
+  font-size: 13px;
   min-width: 0;
 }
 
 .crumb-brand {
-  color: var(--app-text-subtle);
+  color: $text-subtle;
 }
 
 .crumb-sep {
-  color: var(--app-text-subtle);
-  opacity: 0.6;
+  color: var(--app-line);
 }
 
 .crumb-current {
   overflow: hidden;
-  color: var(--app-text);
+  color: $text;
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -338,26 +364,33 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
   flex-shrink: 0;
 }
 
+// .user-avatar {
+//   display: grid;
+//   place-items: center;
+//   width: 30px;
+//   height: 30px;
+//   border-radius: 50%;
+//   background: $brand-soft;
+//   color: $brand;
+//   font-size: 12.5px;
+//   font-weight: 700;
+// }
 .user-avatar-img {
   flex-shrink: 0;
-  background: var(--brand-soft);
-  color: var(--brand);
-  font-size: var(--fs-xs);
+  background: $brand-soft;
+  color: $brand;
+  font-size: 12.5px;
   font-weight: 700;
-  box-shadow: 0 0 0 2px var(--glass-border);
 }
 
 .user-name {
-  font-size: var(--fs-sm);
+  font-size: 13px;
   color: var(--app-text-muted);
 }
 
 /* ---------------- 内容区 ---------------- */
 .content {
   flex: 1;
-  width: 100%;
-  max-width: calc(var(--content-max) + 56px);
-  margin: 0 auto;
   padding: 24px 28px 40px;
 }
 
@@ -366,7 +399,8 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
   display: none;
 }
 
-@include mobile {
+/* ---------------- 响应式：768px 切换 ---------------- */
+@media (max-width: 768px) {
   .sidebar {
     display: none;
   }
@@ -381,7 +415,7 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
   }
 
   .content {
-    padding: 16px 16px calc(84px + env(safe-area-inset-bottom));
+    padding: 16px 16px 84px;
   }
 
   .bottom-nav {
@@ -392,11 +426,11 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
     z-index: 100;
     display: flex;
     align-items: stretch;
-    height: calc(60px + env(safe-area-inset-bottom));
+    height: 60px;
     padding-bottom: env(safe-area-inset-bottom);
     border-top: 1px solid var(--glass-border);
     background: var(--glass-bg-strong);
-    box-shadow: var(--shadow-sm);
+    box-shadow: 0 -6px 18px rgba(16, 24, 40, 0.08);
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
   }
@@ -408,17 +442,18 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
     align-items: center;
     justify-content: center;
     gap: 3px;
-    color: var(--app-text-subtle);
-    font-size: var(--fs-xs);
+    color: $text-subtle;
+    font-size: 11px;
     font-weight: 500;
-    @include transition(color);
+    transition: color 0.18s ease;
 
     &:focus-visible {
+      outline: 2px solid rgba($brand, 0.45);
       outline-offset: -2px;
     }
 
     &.is-active {
-      color: var(--brand);
+      color: $brand;
       font-weight: 600;
 
       .nav-icon {
@@ -428,8 +463,41 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
   }
 
   .nav-icon {
-    font-size: 20px;
-    @include transition(transform);
+    font-size: 19px;
+    transition: transform 0.18s ease;
+  }
+}
+</style>
+<style lang="scss">
+/* 
+ * 路由切换动画：由于类名打在子页面根节点，此处不能使用 scoped
+ */
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.page-fade-enter-from {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+.page-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-fade-enter-active,
+  .page-fade-leave-active {
+    transition: opacity 0.2s ease;
+  }
+
+  .page-fade-enter-from,
+  .page-fade-leave-to {
+    transform: none;
   }
 }
 </style>

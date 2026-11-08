@@ -328,14 +328,32 @@ onMounted(() => {
 </template>
 
 <style scoped lang="scss">
-.settings-page {
-  --el-text-color-regular: var(--app-text);
-  --el-border-radius-base: var(--radius-sm);
+$brand: #4f46e5;
+$brand-soft: var(--brand-soft);
+$ai: #8b5cf6;
+$text: var(--app-text);
+$text-muted: var(--app-text-muted);
+$text-subtle: var(--app-text-subtle);
+$surface: var(--app-surface);
+$line: var(--app-line);
+$radius-lg: 16px;
+$radius-sm: 8px;
+$shadow-card:
+  0 1px 2px rgba(16, 24, 40, 0.04),
+  0 1px 3px rgba(16, 24, 40, 0.06);
 
-  max-width: var(--content-max);
+.settings-page {
+  --el-color-primary: #{$brand};
+  --el-color-primary-light-3: #847eed;
+  --el-color-primary-light-8: #dcdafa;
+  --el-color-primary-light-9: #edeefc;
+  --el-text-color-regular: #{$text};
+  --el-border-radius-base: #{$radius-sm};
+
+  max-width: 1080px;
   margin: 0 auto;
-  color: var(--app-text);
-  font-size: var(--fs-base);
+  color: $text;
+  font-size: 14px;
 }
 
 .icon {
@@ -345,28 +363,57 @@ onMounted(() => {
 }
 
 .page-head {
-  @include page-head;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
 }
 
 .page-title {
-  @include page-title;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
 }
 
 .page-subtitle {
-  @include page-subtitle;
+  margin-top: 6px;
+  font-size: 13px;
+  color: $text-muted;
 }
 
 .auto-save {
-  @include status-pill(success);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: var(--success-text);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .auto-dot {
-  @include status-dot(success);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
 }
 
-/* ---------------- 面板 ---------------- */
 .panel {
-  @include glass-panel(24px 24px 8px);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+
+  padding: 22px 24px 8px;
 
   & + & {
     margin-top: 16px;
@@ -374,21 +421,30 @@ onMounted(() => {
 }
 
 .panel-head {
-  @include panel-head;
-
-  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
 }
 
 .panel-icon {
-  @include panel-icon(brand);
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  background: $brand-soft;
+  color: $brand;
 
   .icon {
-    width: 18px;
-    height: 18px;
+    width: 19px;
+    height: 19px;
   }
 
   &.is-ai {
-    @include panel-icon(ai);
+    background: linear-gradient(135deg, rgba($ai, 0.14), rgba($ai, 0.06));
+    color: $ai;
   }
 }
 
@@ -397,14 +453,21 @@ onMounted(() => {
 }
 
 .panel-title {
-  @include panel-title;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .panel-sub {
-  @include panel-sub;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: $text-subtle;
 }
 
-/* ---------------- 设置行 ---------------- */
+.setting-list {
+  margin-top: 8px;
+}
+
 .setting-row {
   display: flex;
   align-items: center;
@@ -419,59 +482,56 @@ onMounted(() => {
 }
 
 .setting-title {
-  color: var(--app-text);
-  font-size: var(--fs-base);
+  font-size: 13.5px;
   font-weight: 600;
+  color: $text;
 }
 
 .setting-desc {
-  margin-top: 4px;
-  color: var(--app-text-subtle);
-  font-size: var(--fs-xs);
+  margin-top: 3px;
+  font-size: 12px;
+  color: $text-subtle;
 }
 
+.setting-select {
+  width: 150px;
+  flex-shrink: 0;
+}
+
+/* 头像上传相关样式 */
+.avatar-uploader {
+  cursor: pointer;
+  transition: all 0.3s;
+}
+.avatar-hover {
+  border: 2px solid transparent;
+  transition: all 0.2s;
+}
+.avatar-uploader:hover .avatar-hover {
+  border-color: $brand;
+  transform: scale(1.05);
+}
+
+@media (max-width: 720px) {
+  .page-title {
+    font-size: 20px;
+  }
+
+  .panel {
+    padding: 18px 16px 6px;
+  }
+
+  .setting-row {
+    align-items: flex-start;
+  }
+}
+/* ------------------------------ 补充：当前模板使用的控件宽度类 ------------------------------ */
 .setting-control {
   width: 160px;
   flex-shrink: 0;
 }
 
-/* ---------------- 头像上传 ---------------- */
-.avatar-uploader {
-  flex-shrink: 0;
-  cursor: pointer;
-
-  :deep(.el-upload) {
-    border-radius: 50%;
-  }
-
-  :deep(.el-upload:focus-visible) {
-    outline: 2px solid var(--brand-ring);
-    outline-offset: 3px;
-  }
-}
-
-.avatar-hover {
-  border: 2px solid transparent;
-  @include transition(border-color, transform, box-shadow);
-}
-
-.avatar-uploader:hover .avatar-hover {
-  border-color: var(--brand);
-  box-shadow: var(--shadow-brand);
-  transform: scale(1.05);
-}
-
-@include mobile {
-  .panel {
-    padding: 16px 16px 4px;
-  }
-
-  .setting-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
-
+@media (max-width: 720px) {
   .setting-control {
     width: 100%;
   }

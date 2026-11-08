@@ -9,6 +9,8 @@ import type { MemoItem, MemoPriority } from "@/stores/memo";
 import { parseMemoTime } from "@/utils/memoTime";
 
 type ViewMode = "card" | "timeline";
+/** 列表分类：待办中 / 已完成 */
+type ListTab = "pending" | "completed";
 
 /** 紧急程度 → 文案 / 颜色 的统一映射，避免模板里堆三元表达式 */
 const priorityMeta: Record<MemoPriority, { label: string; color: string }> = {
@@ -24,6 +26,8 @@ const { memos } = storeToRefs(memoStore);
 /* ---------------------------- 交互状态 ---------------------------- */
 const keyword = ref("");
 const viewMode = ref<ViewMode>("card");
+/** 列表分类：待办中 / 已完成 */
+const activeTab = ref<ListTab>("pending");
 const router = useRouter();
 
 /** 「新建条目」进入信息录入页，录完回到总览 */
@@ -125,14 +129,39 @@ function compareTask(a: MemoItem, b: MemoItem): number {
 
 const sortedMemos = computed(() => [...memos.value].sort(compareTask));
 
+/** 两个分类各自的数量，用于标签上的角标 */
+const pendingCount = computed(
+  () => memos.value.filter((memo) => !memo.completed).length,
+);
+const completedCount = computed(
+  () => memos.value.filter((memo) => memo.completed).length,
+);
+
+/**
+ * 列表数据 = 先按分类过滤（待办中 / 已完成），再叠加关键词搜索。
+ * 排序沿用 sortedMemos（未完成在前、时间升序、同时间按优先级）。
+ */
 const filteredMemos = computed(() => {
   const kw = keyword.value.trim().toLowerCase();
-  if (!kw) return sortedMemos.value;
-  return sortedMemos.value.filter((memo) =>
-    [memo.title, memo.type, memo.aiSummary].some((field) =>
+  const wantCompleted = activeTab.value === "completed";
+
+  return sortedMemos.value.filter((memo) => {
+    // 1) 分类过滤
+    if (wantCompleted ? !memo.completed : memo.completed) return false;
+
+    // 2) 关键词过滤
+    if (!kw) return true;
+    return [memo.title, memo.type, memo.aiSummary].some((field) =>
       field.toLowerCase().includes(kw),
-    ),
-  );
+    );
+  });
+});
+
+/** 列表为空时的文案：区分「搜索没命中」和「这个分类本来就没有任务」 */
+const emptyStateText = computed(() => {
+  if (keyword.value.trim()) return "没有匹配的条目，换个关键词试试";
+  if (activeTab.value === "completed") return "暂无已完成的任务，勾选完成的任务会出现在这里";
+  return "待办已清空，先休息一下吧";
 });
 
 /* ---------------------------- 动态看板数据计算 ---------------------------- */
@@ -378,6 +407,16 @@ const pageSubtitle = computed(() =>
           <span class="list-title">待办清单</span>
           <span class="list-count">{{ filteredMemos.length }} 条</span>
 
+          <!-- 分类切换：待办中 / 已完成 -->
+          <el-radio-group v-model="activeTab" class="tab-switch" size="small">
+            <el-radio-button value="pending">
+              待办中 {{ pendingCount }}
+            </el-radio-button>
+            <el-radio-button value="completed">
+              已完成 {{ completedCount }}
+            </el-radio-button>
+          </el-radio-group>
+
           <ul class="legend" aria-label="紧急程度图例">
             <li
               v-for="(meta, key) in priorityMeta"
@@ -413,12 +452,9 @@ const pageSubtitle = computed(() =>
         </el-empty>
       </div>
 
-      <!-- 有数据但搜索没命中 -->
+      <!-- 有数据但当前分类 / 搜索结果为空 -->
       <div v-else-if="!filteredMemos.length" class="memo-empty">
-        <el-empty
-          :image-size="88"
-          description="没有匹配的条目，换个关键词试试"
-        />
+        <el-empty :image-size="88" :description="emptyStateText" />
       </div>
 
       <template v-else>
@@ -590,11 +626,40 @@ const pageSubtitle = computed(() =>
 </template>
 
 <style scoped lang="scss">
+$brand: #4f46e5;
+$brand-soft: var(--brand-soft);
+$danger: #ef4444;
+$warn: #f59e0b;
+$success: #10b981;
+$text: var(--app-text);
+$text-muted: var(--app-text-muted);
+$text-subtle: var(--app-text-subtle);
+$bg: var(--app-bg);
+$surface: var(--app-surface);
+$line: var(--app-line);
+$radius-lg: 14px;
+$radius-md: 10px;
+$radius-sm: 8px;
+$shadow-card:
+  0 1px 2px rgba(16, 24, 40, 0.04),
+  0 1px 3px rgba(16, 24, 40, 0.06);
+$shadow-hover:
+  0 10px 24px -8px rgba(16, 24, 40, 0.16),
+  0 2px 6px rgba(16, 24, 40, 0.05);
+
 .overview-page {
-  max-width: var(--content-max);
-  margin: 0 auto;
-  color: var(--app-text);
-  font-size: var(--fs-base);
+  --el-color-primary: #{$brand};
+  --el-color-primary-light-3: #847eed;
+  --el-color-primary-light-5: #a7a3f2;
+  --el-color-primary-light-7: #cac8f7;
+  --el-color-primary-light-8: #dcdafa;
+  --el-color-primary-light-9: #edeefc;
+  --el-color-primary-dark-2: #3f38b7;
+  --el-text-color-regular: #{$text};
+  --el-border-radius-base: #{$radius-sm};
+
+  color: $text;
+  font-size: 14px;
 }
 
 .icon {
@@ -603,17 +668,28 @@ const pageSubtitle = computed(() =>
   flex-shrink: 0;
 }
 
-/* ---------------- 页头 ---------------- */
 .page-head {
-  @include page-head;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  max-width: 1200px;
+  margin: 0 auto 24px;
 }
 
 .page-title {
-  @include page-title;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: $text;
 }
 
 .page-subtitle {
-  @include page-subtitle;
+  margin-top: 6px;
+  font-size: 13.5px;
+  color: $text-muted;
 }
 
 .head-actions {
@@ -626,15 +702,23 @@ const pageSubtitle = computed(() =>
   width: 280px;
 
   :deep(.el-input__wrapper) {
-    padding: 1px 12px;
-    border-radius: var(--radius-sm);
+    border-radius: $radius-sm;
     background: var(--input-bg);
-    box-shadow: 0 0 0 1px var(--app-line) inset;
-    @include field-states;
+    box-shadow: 0 0 0 1px $line inset;
+    padding: 1px 12px;
+    transition: box-shadow 0.2s ease;
+
+    &:hover {
+      box-shadow: 0 0 0 1px var(--app-line) inset;
+    }
+
+    &.is-focus {
+      box-shadow: 0 0 0 2px rgba($brand, 0.35) inset;
+    }
   }
 
   :deep(.el-input__prefix) {
-    color: var(--app-text-subtle);
+    color: $text-subtle;
   }
 }
 
@@ -642,21 +726,23 @@ const pageSubtitle = computed(() =>
   width: 40px;
   height: 40px;
   margin-left: 0;
-  border: 1px solid var(--app-line);
-  background: var(--surface-inner);
-  color: var(--app-text-muted);
-  @include transition(color, border-color, background);
+  border: 1px solid $line;
+  background: $surface;
+  color: $text-muted;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease;
 
   .icon {
-    width: 18px;
-    height: 18px;
+    width: 17px;
+    height: 17px;
   }
 
-  &:hover,
-  &:focus-visible {
-    border-color: tint(brand, 35%);
-    background: var(--brand-soft);
-    color: var(--brand);
+  &:hover {
+    border-color: rgba($brand, 0.35);
+    background: $brand-soft;
+    color: $brand;
   }
 }
 
@@ -664,51 +750,64 @@ const pageSubtitle = computed(() =>
   height: 40px;
   padding: 0 18px;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: $radius-sm;
   font-weight: 600;
-  box-shadow: 0 4px 12px -6px tint(brand, 60%);
-  @include lift-button;
+  box-shadow: 0 6px 14px -6px rgba($brand, 0.65);
 
   .icon {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
     margin-right: 6px;
+  }
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 20px -8px rgba($brand, 0.7);
   }
 }
 
-/* ---------------- 统计卡 ---------------- */
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
-  margin-bottom: 32px;
+  max-width: 1200px;
+  margin: 0 auto 28px;
 }
 
 .stat-card {
-  @include transition(box-shadow, transform);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+
+  transition:
+    box-shadow 0.22s ease,
+    transform 0.22s ease;
 
   &:hover {
     transform: translateY(-2px);
-    box-shadow: var(--shadow-hover);
+    box-shadow: $shadow-hover;
   }
 
   :deep(.el-card__body) {
-    padding: 20px;
+    padding: 18px 20px;
   }
 }
 
 .stat-inner {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
 }
 
 .stat-icon {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-md);
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
 
   .icon {
     width: 20px;
@@ -716,17 +815,17 @@ const pageSubtitle = computed(() =>
   }
 
   &.is-brand {
-    color: var(--brand);
-    background: var(--brand-soft);
+    color: $brand;
+    background: $brand-soft;
   }
 
   &.is-danger {
-    color: var(--danger);
+    color: $danger;
     background: var(--danger-soft);
   }
 
   &.is-success {
-    color: var(--success);
+    color: $success;
     background: var(--success-soft);
   }
 }
@@ -738,12 +837,12 @@ const pageSubtitle = computed(() =>
 }
 
 .stat-label {
-  font-size: var(--fs-sm);
-  color: var(--app-text-muted);
+  font-size: 13px;
+  color: $text-muted;
 }
 
 .stat-value {
-  font-size: var(--fs-xl);
+  font-size: 26px;
   font-weight: 700;
   line-height: 1.15;
   letter-spacing: -0.02em;
@@ -751,38 +850,42 @@ const pageSubtitle = computed(() =>
 
   small {
     margin-left: 1px;
-    font-size: var(--fs-base);
+    font-size: 14px;
     font-weight: 600;
   }
 
   &.is-brand {
-    color: var(--brand);
+    color: $brand;
   }
 
   &.is-danger {
-    color: var(--danger);
+    color: $danger;
   }
 
   &.is-success {
-    color: var(--success);
+    color: $success;
   }
 }
 
 .stat-hint {
   margin-top: 12px;
-  font-size: var(--fs-xs);
-  color: var(--app-text-subtle);
+  font-size: 12px;
+  color: $text-subtle;
 }
 
 .stat-progress {
-  margin-top: 16px;
+  margin-top: 14px;
 
   :deep(.el-progress-bar__outer) {
     background-color: var(--chip-bg);
   }
 }
 
-/* ---------------- 列表工具栏 ---------------- */
+.list-section {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
 .list-toolbar {
   display: flex;
   align-items: center;
@@ -795,29 +898,29 @@ const pageSubtitle = computed(() =>
 .toolbar-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .list-title {
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  color: var(--app-text);
+  font-size: 16px;
+  font-weight: 700;
+  color: $text;
 }
 
 .list-count {
   padding: 1px 8px;
-  border-radius: var(--radius-pill);
+  border-radius: 999px;
   background: var(--chip-bg);
-  color: var(--app-text-muted);
-  font-size: var(--fs-xs);
+  color: $text-muted;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .legend {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin: 0 0 0 4px;
+  gap: 14px;
+  margin: 0 0 0 6px;
   padding: 0;
   list-style: none;
 }
@@ -826,31 +929,31 @@ const pageSubtitle = computed(() =>
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--fs-xs);
-  color: var(--app-text-muted);
+  font-size: 12px;
+  color: $text-muted;
 }
 
 .legend-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
 }
 
 .view-switch {
   :deep(.el-radio-button__inner) {
-    padding: 9px 16px;
-    border-color: var(--app-line);
-    background: var(--surface-inner);
-    color: var(--app-text-muted);
+    border-color: $line;
+    background: $surface;
+    color: $text-muted;
     font-weight: 500;
+    padding: 9px 16px;
     box-shadow: none;
-    @include transition(background, border-color, color);
+    transition: all 0.2s ease;
   }
 
   :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-    border-color: tint(brand, 45%);
-    background: var(--brand-soft);
-    color: var(--brand);
+    background: $brand-soft;
+    border-color: rgba($brand, 0.45);
+    color: $brand;
     box-shadow: none;
   }
 
@@ -858,102 +961,57 @@ const pageSubtitle = computed(() =>
     .el-radio-button__original-radio:focus-visible + .el-radio-button__inner
   ) {
     outline: none;
-    box-shadow: inset 0 0 0 2px var(--brand-ring);
+    box-shadow: inset 0 0 0 1px rgba($brand, 0.55);
   }
 }
 
-/* ---------------- 卡片视图 ---------------- */
 .memo-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
   gap: 16px;
 }
 
 .memo-card {
-  @include glass-panel(20px 20px 20px 24px);
-  position: relative;
-  overflow: hidden;
-  cursor: pointer;
-  outline: none;
-  @include transition(transform, box-shadow, border-color, background, opacity);
-
-  &:hover {
-    transform: translateY(-3px);
-    border-color: tint(brand, 28%);
-    box-shadow: var(--shadow-hover);
-  }
-
-  &:focus-visible {
-    border-color: tint(brand, 50%);
-    box-shadow:
-      0 0 0 3px var(--brand-ring),
-      var(--shadow-hover);
-  }
-
-  &.is-high .priority-bar {
-    background: var(--prio-high);
-  }
-
-  &.is-medium .priority-bar {
-    background: var(--prio-mid);
-  }
-
-  &.is-low .priority-bar {
-    background: var(--prio-low);
-  }
-}
-
-/*
- * 已完成的待办：只淡化文字，卡片外壳保持磨砂玻璃。
- * 之前的写法容易让整张卡一起变透明/发灰（父级 opacity 或过期样式牵连），
- * 这里把外壳的 opacity / background / border / shadow 全部显式钉回玻璃质感。
- * 第二组 :has() 是兜底：即使卡片没拿到 is-completed，只要内部勾选框已选中也按已完成处理。
- */
-.memo-card.is-completed,
-.timeline-card.is-completed,
-.memo-card:has(.el-checkbox.is-checked),
-.timeline-card:has(.el-checkbox.is-checked) {
-  opacity: 1;
   background: var(--glass-bg);
-  border-color: var(--glass-border);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
   box-shadow: var(--glass-shadow);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
 
-  /* 透明度只加在文字子元素上，卡片本身保持不透明 */
-  .memo-title,
-  .memo-time,
-  .ai-text,
-  .memo-type {
-    opacity: 0.62;
-  }
+  position: relative;
+  overflow: hidden;
+  padding: 18px 20px 18px 24px;
+  cursor: pointer;
+  outline: none;
+  transition:
+    transform 0.22s ease,
+    box-shadow 0.22s ease,
+    border-color 0.22s ease;
 
-  /* 已完成卡片仍保留 hover 反馈：边框/投影变化，但底色始终是玻璃 */
   &:hover {
-    border-color: tint(brand, 28%);
-    box-shadow: var(--shadow-hover);
+    transform: translateY(-3px);
+    border-color: rgba($brand, 0.28);
+    box-shadow: $shadow-hover;
   }
 
-  /* 标题保留删除线，颜色略压暗，仍然清晰可读 */
-  .memo-title.is-completed {
-    opacity: 0.62;
-    color: var(--app-text-muted);
-    text-decoration: line-through;
-    text-decoration-thickness: 1.5px;
-    text-decoration-color: tint(brand, 45%);
+  &:focus-visible {
+    border-color: rgba($brand, 0.5);
+    box-shadow:
+      0 0 0 3px rgba($brand, 0.16),
+      $shadow-hover;
   }
 
-  /* 已完成的卡片不再挂「过期」的灰条，色条保持原本的优先级颜色 */
   &.is-high .priority-bar {
-    background: var(--prio-high);
+    background: $danger;
   }
 
   &.is-medium .priority-bar {
-    background: var(--prio-mid);
+    background: $warn;
   }
 
   &.is-low .priority-bar {
-    background: var(--prio-low);
+    background: $success;
   }
 }
 
@@ -966,50 +1024,51 @@ const pageSubtitle = computed(() =>
 .memo-body {
   display: flex;
   flex-direction: column;
-  min-height: 120px;
+  min-height: 118px;
 }
 
 .memo-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
+/* 新增：包裹勾选框和标题的行 */
 .memo-title-row {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
-  min-width: 0;
 }
 
 .memo-checkbox {
-  height: 24px;
+  margin-top: 2px; /* 微调对齐 */
+  line-height: 6px;
+  // line-height:100%;
 }
 
 .memo-title {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  line-height: 1.5;
-  color: var(--app-text);
-  @include transition(color, opacity, text-decoration);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: $text;
+  transition: all 0.2s ease;
 
-  /* 已完成的标题变淡并划掉 */
+  /* 新增：已完成任务的标题样式 */
   &.is-completed {
     text-decoration: line-through;
     opacity: 0.5;
-    color: var(--app-text-muted);
   }
 }
 
 .memo-type {
   flex-shrink: 0;
-  border-color: var(--app-line);
+  border-color: $line;
   background: var(--chip-bg);
   color: var(--app-text-muted);
-  font-size: var(--fs-xs);
   font-weight: 500;
+  font-size: 11.5px;
 }
 
 .memo-head-right {
@@ -1023,30 +1082,34 @@ const pageSubtitle = computed(() =>
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   background: transparent;
-  color: var(--app-text-subtle);
+  color: $text-subtle;
   cursor: pointer;
   opacity: 0.55;
-  @include transition(opacity, color, background);
+  transition:
+    opacity 0.18s ease,
+    color 0.18s ease,
+    background 0.18s ease;
 
   .el-icon {
-    font-size: 16px;
+    font-size: 15px;
   }
 
-  &:hover,
+  &:hover {
+    opacity: 1;
+    color: $danger;
+    background: rgba(239, 68, 68, 0.1);
+  }
+
   &:focus-visible {
     opacity: 1;
-    color: var(--danger);
-    background: tint(danger, 12%);
-  }
-
-  &:focus-visible {
-    outline-color: tint(danger, 45%);
+    outline: 2px solid rgba(239, 68, 68, 0.45);
+    outline-offset: 1px;
   }
 }
 
@@ -1054,32 +1117,27 @@ const pageSubtitle = computed(() =>
   opacity: 1;
 }
 
-/* 
- * 过期任务：不要直接给整个卡片加 opacity（会显得很脏），
- * 而是改变卡片的背景和边框，并降低内部文字和标签的透明度。
- * 另外如果任务完成了，优先级色条就不变成灰色了，保留原本颜色。
- */
-.memo-card.is-overdue:not(.is-completed),
-.timeline-card.is-overdue:not(.is-completed) {
-  border-color: var(--overdue-border);
-  background: var(--overdue-bg);
+/* 过期任务置灰 */
+.memo-card.is-overdue {
+  opacity: 0.55;
+  background: var(--overdue-bg, var(--glass-bg));
+  border-color: var(--overdue-border, rgba(156, 163, 175, 0.34));
 
-  .memo-title,
-  .memo-time,
-  .ai-summary,
   .memo-type {
-    opacity: 0.6;
-  }
-
-  /* 过期且未完成的任务，色条变灰 */
-  &.is-high .priority-bar,
-  &.is-medium .priority-bar,
-  &.is-low .priority-bar {
-    background: var(--overdue-bar);
+    color: $text-subtle;
   }
 }
 
-/* 新添加的待办：品牌色呼吸光晕 */
+html.dark .memo-card.is-overdue {
+  background: var(--overdue-bg, rgba(50, 52, 60, 0.45));
+  border-color: var(--overdue-border, rgba(255, 255, 255, 0.09));
+}
+
+.memo-card.is-overdue .priority-bar {
+  background: var(--overdue-bar, #9ca3af);
+}
+
+/* 新添加的待办：紫色呼吸光晕 */
 .memo-card.is-new-memo {
   animation: memo-new-glow 1.8s ease-in-out infinite;
 
@@ -1092,14 +1150,14 @@ const pageSubtitle = computed(() =>
   0%,
   100% {
     box-shadow:
-      0 0 0 0 tint(brand, 0%),
+      0 0 0 0 rgba(139, 92, 246, 0),
       var(--glass-shadow);
   }
 
   50% {
     box-shadow:
-      0 0 0 3px tint(brand, 35%),
-      0 10px 26px -10px tint(brand, 50%),
+      0 0 0 3px rgba(139, 92, 246, 0.38),
+      0 10px 26px -10px rgba(139, 92, 246, 0.55),
       var(--glass-shadow);
   }
 }
@@ -1108,7 +1166,7 @@ const pageSubtitle = computed(() =>
   .memo-card.is-new-memo {
     animation: none;
     box-shadow:
-      0 0 0 2px tint(brand, 45%),
+      0 0 0 2px rgba(139, 92, 246, 0.45),
       var(--glass-shadow);
   }
 }
@@ -1116,49 +1174,54 @@ const pageSubtitle = computed(() =>
 .memo-time {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   margin-top: 8px;
-  font-size: var(--fs-sm);
-  color: var(--app-text-muted);
+  font-size: 12.5px;
+  color: $text-muted;
 
   .icon {
-    width: 14px;
-    height: 14px;
-    color: var(--app-text-subtle);
+    width: 13px;
+    height: 13px;
+    color: $text-subtle;
   }
 }
 
 .ai-summary {
   display: flex;
-  align-items: flex-start;
   gap: 8px;
   margin-top: auto;
-  padding-top: 16px;
+  padding-top: 14px;
 }
 
 .ai-badge {
-  @include ai-badge;
   flex-shrink: 0;
-  margin-top: 1px;
+  height: 18px;
   padding: 0 6px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, $brand, #7c6cf0);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
   line-height: 18px;
   letter-spacing: 0.04em;
 }
 
 .ai-text {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--app-text-muted);
-  font-size: var(--fs-sm);
+  font-size: 12.5px;
   line-height: 1.6;
+  color: var(--app-text-muted);
+  display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
+  overflow: hidden;
 }
+
 .memo-timeline {
   position: relative;
+  max-width: 920px;
   margin: 0;
-  padding: 2px 0;
+  padding: 2px 0 2px 0;
   list-style: none;
 
   &::before {
@@ -1168,14 +1231,13 @@ const pageSubtitle = computed(() =>
     bottom: 12px;
     left: 9px;
     width: 2px;
-    border-radius: 1px;
     background: linear-gradient(180deg, var(--app-line), transparent);
   }
 }
 
 .timeline-item {
   position: relative;
-  padding-left: 36px;
+  padding-left: 34px;
 
   & + & {
     margin-top: 12px;
@@ -1184,66 +1246,70 @@ const pageSubtitle = computed(() =>
 
 .timeline-dot {
   position: absolute;
-  top: 22px;
+  top: 20px;
   left: 0;
   width: 20px;
   height: 20px;
-  border: 2px solid var(--app-line);
+  border: 2px solid $line;
   border-radius: 50%;
-  background: var(--surface-inner);
-  box-shadow: 0 0 0 4px tint(brand, 8%);
+  background: $surface;
+  box-shadow: 0 0 0 4px $bg;
 }
 
 .timeline-card {
-  @include glass-panel(16px 20px);
-  cursor: pointer;
-  @include transition(box-shadow, transform, border-color);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+
+  padding: 16px 18px;
+  transition:
+    box-shadow 0.22s ease,
+    transform 0.22s ease;
 
   &:hover {
     transform: translateX(2px);
-    border-color: tint(brand, 28%);
-    box-shadow: var(--shadow-hover);
-  }
-
-  &:focus-visible {
-    outline: none;
-    border-color: tint(brand, 50%);
-    box-shadow:
-      0 0 0 3px var(--brand-ring),
-      var(--shadow-hover);
+    box-shadow: $shadow-hover;
   }
 
   .ai-summary {
-    padding-top: 12px;
+    padding-top: 10px;
   }
 
   .memo-head {
-    align-items: center;
     justify-content: flex-start;
+    align-items: center;
     gap: 8px;
   }
 }
 
-/* ---------------- 空状态 ---------------- */
 .memo-empty {
-  @include glass-panel(32px 0);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+
+  padding: 32px 0;
 }
 
 .empty-create {
-  height: 36px;
   margin-top: 4px;
   padding: 0 20px;
+  height: 36px;
   font-weight: 600;
 }
 
-/* ---------------- 响应式 ---------------- */
-@include tablet {
+@media (max-width: 1024px) {
   .stat-grid {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
 }
 
-@include mobile {
+@media (max-width: 720px) {
   .page-head {
     align-items: stretch;
   }
@@ -1257,18 +1323,50 @@ const pageSubtitle = computed(() =>
     width: auto;
   }
 
-  .bell-btn,
+  .memo-grid {
+    grid-template-columns: 1fr;
+  }
+
   .legend {
     display: none;
   }
+}
 
-  .stat-grid {
-    gap: 12px;
-    margin-bottom: 24px;
+@media (max-width: 720px) {
+  .bell-btn {
+    display: none;
+  }
+}
+
+/* ---------------- 待办中 / 已完成 分类切换 ---------------- */
+.toolbar-left {
+  flex-wrap: wrap;
+}
+
+.tab-switch {
+  :deep(.el-radio-button__inner) {
+    border-color: $line;
+    background: $surface;
+    color: $text-muted;
+    font-weight: 500;
+    font-size: 12.5px;
+    padding: 5px 12px;
+    box-shadow: none;
+    transition: all 0.2s ease;
   }
 
-  .memo-grid {
-    grid-template-columns: 1fr;
+  :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+    background: $brand-soft;
+    border-color: rgba($brand, 0.45);
+    color: $brand;
+    box-shadow: none;
+  }
+
+  :deep(
+    .el-radio-button__original-radio:focus-visible + .el-radio-button__inner
+  ) {
+    outline: none;
+    box-shadow: inset 0 0 0 1px rgba($brand, 0.55);
   }
 }
 </style>

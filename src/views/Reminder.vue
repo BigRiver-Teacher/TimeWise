@@ -401,13 +401,32 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
-.reminder-page {
-  --el-text-color-regular: var(--app-text);
+$brand: #4f46e5;
+$brand-soft: var(--brand-soft);
+$ai: #8b5cf6;
+$text: var(--app-text);
+$text-muted: var(--app-text-muted);
+$text-subtle: var(--app-text-subtle);
+$bg: var(--app-bg);
+$surface: var(--app-surface);
+$line: var(--app-line);
+$radius-lg: 16px;
+$radius-md: 12px;
+$radius-sm: 8px;
+$shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
 
-  max-width: var(--content-max);
-  margin: 0 auto;
-  color: var(--app-text);
-  font-size: var(--fs-base);
+.reminder-page {
+  --el-color-primary: #{$brand};
+  --el-color-primary-light-3: #847eed;
+  --el-color-primary-light-5: #a7a3f2;
+  --el-color-primary-light-7: #cac8f7;
+  --el-color-primary-light-8: #dcdafa;
+  --el-color-primary-light-9: #edeefc;
+  --el-color-primary-dark-2: #3f38b7;
+  --el-text-color-regular: #{$text};
+
+  color: $text;
+  font-size: 14px;
 }
 
 .icon {
@@ -418,48 +437,91 @@ onUnmounted(() => {
 
 /* ---------------- 顶部 ---------------- */
 .page-head {
-  @include page-head;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  max-width: 1080px;
+  margin: 0 auto 20px;
 }
 
 .page-title {
-  @include page-title;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
 }
 
 .page-subtitle {
-  @include page-subtitle;
+  margin-top: 6px;
+  font-size: 13.5px;
+  color: $text-muted;
 }
 
 .head-note {
-  @include status-pill(success);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: var(--success-text);
+  font-size: 12.5px;
+  font-weight: 500;
 }
 
 .note-dot {
-  @include status-dot(success);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
 }
 
-/* ---------------- 面板 ---------------- */
+/* ---------------- 卡片 ---------------- */
 .panel {
-  @include glass-panel;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 22px 24px;
 
   & + & {
-    margin-top: 16px;
+    margin-top: 18px;
   }
 }
 
 .panel-head {
-  @include panel-head;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .panel-icon {
-  @include panel-icon(brand);
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  background: $brand-soft;
+  color: $brand;
 
   .icon {
-    width: 18px;
-    height: 18px;
+    width: 19px;
+    height: 19px;
   }
 
   &.is-ai {
-    @include panel-icon(ai);
+    background: linear-gradient(135deg, rgba($ai, 0.14), rgba($ai, 0.06));
+    color: $ai;
   }
 }
 
@@ -468,11 +530,15 @@ onUnmounted(() => {
 }
 
 .panel-title {
-  @include panel-title;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .panel-sub {
-  @include panel-sub;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: $text-subtle;
 }
 
 /* ---------------- 图例 ---------------- */
@@ -489,11 +555,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--app-text-muted);
-  font-size: var(--fs-xs);
+  font-size: 12.5px;
+  color: $text-muted;
 
   b {
-    color: var(--app-text);
+    color: $text;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
@@ -506,25 +572,10 @@ onUnmounted(() => {
 }
 
 /* ---------------- 图表 ---------------- */
-.chart-wrap {
-  position: relative;
-}
-
 .week-chart {
   width: 100%;
   height: 240px;
-}
-
-.chart-empty {
-  position: absolute;
-  inset: 0;
-  padding: 0;
-  pointer-events: none;
-
-  :deep(.el-empty__description p) {
-    color: var(--app-text-subtle);
-    font-size: var(--fs-sm);
-  }
+  margin-top: 14px;
 }
 
 /* ---------------- 时间轴 ---------------- */
@@ -532,10 +583,14 @@ onUnmounted(() => {
   padding-bottom: 8px;
 }
 
+.groups {
+  margin-top: 18px;
+}
+
 .group + .group {
-  margin-top: 20px;
+  margin-top: 22px;
   padding-top: 20px;
-  border-top: 1px dashed var(--app-line);
+  border-top: 1px dashed var(--app-line-soft);
 }
 
 .group-head {
@@ -552,17 +607,17 @@ onUnmounted(() => {
 }
 
 .group-title {
+  font-size: 13.5px;
+  font-weight: 700;
   color: var(--app-text);
-  font-size: var(--fs-base);
-  font-weight: 600;
 }
 
 .group-count {
   padding: 1px 8px;
-  border-radius: var(--radius-pill);
+  border-radius: 999px;
   background: var(--chip-bg);
-  color: var(--app-text-muted);
-  font-size: var(--fs-xs);
+  color: $text-muted;
+  font-size: 11.5px;
   font-weight: 600;
 }
 
@@ -570,7 +625,7 @@ onUnmounted(() => {
   padding-left: 2px;
 
   :deep(.el-timeline-item) {
-    padding-bottom: 12px;
+    padding-bottom: 14px;
   }
 
   :deep(.el-timeline-item__tail) {
@@ -578,7 +633,7 @@ onUnmounted(() => {
   }
 
   :deep(.el-timeline-item__node) {
-    box-shadow: 0 0 0 4px tint(brand, 10%);
+    box-shadow: 0 0 0 4px $surface;
   }
 
   :deep(.el-timeline-item__wrapper) {
@@ -587,12 +642,20 @@ onUnmounted(() => {
 }
 
 .reminder-card {
-  @include inner-card;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
 
-  padding: 12px 16px;
+  padding: 14px 16px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 
   &:hover {
-    border-color: tint(brand, 25%);
+    transform: translateX(2px);
+    border-color: rgba($brand, 0.25);
+    box-shadow: 0 8px 20px -12px rgba(16, 24, 40, 0.22);
   }
 }
 
@@ -600,50 +663,50 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .card-title {
-  color: var(--app-text);
-  font-size: var(--fs-base);
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.5;
+  color: $text;
 }
 
 .card-type {
   flex-shrink: 0;
-  border-color: var(--app-line);
+  border-color: $line;
   background: var(--chip-bg);
   color: var(--app-text-muted);
-  font-size: var(--fs-xs);
   font-weight: 500;
+  font-size: 11.5px;
 }
 
 .card-time {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   margin-top: 6px;
-  color: var(--app-text-muted);
-  font-size: var(--fs-xs);
+  font-size: 12.5px;
+  color: $text-muted;
 
   .icon {
-    width: 14px;
-    height: 14px;
-    color: var(--app-text-subtle);
+    width: 13px;
+    height: 13px;
+    color: $text-subtle;
   }
 }
 
 .card-meta {
   margin-top: 4px;
-  color: var(--app-text-subtle);
-  font-size: var(--fs-xs);
+  font-size: 12px;
+  color: $text-subtle;
 }
 
 /* ---------------- 响应式 ---------------- */
-@include mobile {
+@media (max-width: 720px) {
   .panel {
-    padding: 16px;
+    padding: 18px;
   }
 
   .panel-head {
@@ -652,7 +715,7 @@ onUnmounted(() => {
 
   .chart-legend {
     width: 100%;
-    margin: 4px 0 0;
+    margin: 10px 0 0;
     gap: 12px;
   }
 
@@ -661,7 +724,23 @@ onUnmounted(() => {
   }
 
   .head-note {
-    padding: 4px 10px;
+    display: none;
+  }
+}
+/* ------------------------------ 补充：当前模板新增的图表容器类 ------------------------------ */
+.chart-wrap {
+  position: relative;
+}
+
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  pointer-events: none;
+
+  :deep(.el-empty__description p) {
+    color: var(--app-text-subtle);
+    font-size: 12.5px;
   }
 }
 </style>

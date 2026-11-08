@@ -814,14 +814,37 @@ function removeReminder(hours: number): void {
 </template>
 
 <style scoped lang="scss">
-.detail-page {
-  --el-text-color-regular: var(--app-text);
-  --el-border-radius-base: var(--radius-sm);
+$brand: #4f46e5;
+$brand-soft: var(--brand-soft);
+$ai: #8b5cf6;
+$ai-deep: #7c3aed;
+$ai-soft: var(--ai-soft);
+$text: var(--app-text);
+$text-muted: var(--app-text-muted);
+$text-subtle: var(--app-text-subtle);
+$bg: var(--app-bg);
+$surface: var(--app-surface);
+$line: var(--app-line);
+$radius-lg: 16px;
+$radius-md: 12px;
+$radius-sm: 8px;
+$shadow-card:
+  0 1px 2px rgba(16, 24, 40, 0.04),
+  0 1px 3px rgba(16, 24, 40, 0.06);
 
-  max-width: var(--content-max);
-  margin: 0 auto;
-  color: var(--app-text);
-  font-size: var(--fs-base);
+.detail-page {
+  --el-color-primary: #{$brand};
+  --el-color-primary-light-3: #847eed;
+  --el-color-primary-light-5: #a7a3f2;
+  --el-color-primary-light-7: #cac8f7;
+  --el-color-primary-light-8: #dcdafa;
+  --el-color-primary-light-9: #edeefc;
+  --el-color-primary-dark-2: #3f38b7;
+  --el-text-color-regular: #{$text};
+  --el-border-radius-base: #{$radius-sm};
+
+  color: $text;
+  font-size: 14px;
 }
 
 .icon {
@@ -832,46 +855,50 @@ function removeReminder(hours: number): void {
 
 /* ---------------- 顶部操作栏 ---------------- */
 .action-bar {
-  @include page-head;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  max-width: 1080px;
+  margin: 0 auto 20px;
 }
 
 .bar-left {
   display: flex;
-  align-items: center;
-  gap: 16px;
+  // align-items: center;
+  gap: 14px;
 }
 
 .back-btn {
-  height: 36px;
-  padding: 0 10px 0 6px;
-  border-radius: var(--radius-sm);
-  color: var(--app-text-muted);
-  font-size: var(--fs-sm);
+  padding: 0 8px 0 4px;
+  color: $text-muted;
+  font-size: 13px;
   font-weight: 500;
-  @include transition(color, background, transform);
 
   .icon {
+    width: 15px;
+    height: 15px;
     margin-right: 2px;
   }
 
-  &:hover,
-  &:focus-visible {
-    background: var(--brand-soft);
-    color: var(--brand);
-  }
-
-  &:active {
-    transform: scale(0.98);
+  &:hover {
+    color: $brand;
+    background: transparent;
   }
 }
 
 .page-title {
-  @include page-title;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
 }
 
 .page-subtitle {
-  @include page-subtitle;
+  margin-top: 4px;
+  font-size: 13px;
+  color: $text-muted;
 }
 
 .bar-right {
@@ -881,47 +908,73 @@ function removeReminder(hours: number): void {
 }
 
 .dirty-chip {
-  @include status-pill(warn);
-  padding: 4px 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--warn-soft);
   color: var(--warn-text);
+  font-size: 12px;
   font-weight: 600;
 }
 
 .save-btn {
   min-width: 116px;
-  height: 40px;
+  height: 42px;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: $radius-md;
   font-weight: 600;
-  box-shadow: 0 4px 12px -6px tint(brand, 60%);
-  @include lift-button;
+  box-shadow: 0 6px 16px -8px rgba($brand, 0.7);
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 22px -10px rgba($brand, 0.8);
+  }
 }
 
-/* ---------------- 面板 ---------------- */
+/* ---------------- 卡片 ---------------- */
+.content {
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
 .panel {
-  @include glass-panel;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+
+  padding: 22px 24px 24px;
 
   & + & {
-    margin-top: 16px;
+    margin-top: 18px;
   }
 }
 
 .panel-head {
-  @include panel-head;
-  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .panel-icon {
-  @include panel-icon(brand);
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: $brand-soft;
+  color: $brand;
+  flex-shrink: 0;
 
   .icon {
-    width: 18px;
-    height: 18px;
+    width: 19px;
+    height: 19px;
   }
 
   &.is-ai {
-    background: tint(ai, 14%);
-    color: var(--ai);
+    background: linear-gradient(135deg, rgba($ai, 0.14), rgba($ai, 0.06));
+    color: $ai;
   }
 }
 
@@ -930,11 +983,15 @@ function removeReminder(hours: number): void {
 }
 
 .panel-title {
-  @include panel-title;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .panel-sub {
-  @include panel-sub;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: $text-subtle;
 }
 
 /* ---------------- 表单 ---------------- */
@@ -943,13 +1000,13 @@ function removeReminder(hours: number): void {
 }
 
 .detail-form :deep(.el-form-item) {
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .detail-form :deep(.el-form-item__label) {
   margin-bottom: 6px;
   padding: 0;
-  font-size: var(--fs-sm);
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.4;
   color: var(--app-text);
@@ -959,6 +1016,7 @@ function removeReminder(hours: number): void {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  text-align: center;
 }
 
 .full-width {
@@ -974,24 +1032,32 @@ function removeReminder(hours: number): void {
 .detail-form :deep(.el-input__wrapper),
 .detail-form :deep(.el-select__wrapper) {
   min-height: 40px;
-  border-radius: var(--radius-sm);
+  border-radius: $radius-sm;
   background: var(--input-bg);
-  box-shadow: 0 0 0 1px var(--app-line) inset;
-  @include field-states;
+  box-shadow: 0 0 0 1px $line inset;
+  transition: box-shadow 0.2s ease;
+
+  &:hover {
+    box-shadow: 0 0 0 1px var(--app-line) inset;
+  }
+
+  &.is-focus {
+    box-shadow: 0 0 0 2px rgba($brand, 0.3) inset;
+  }
 }
 
 .detail-form :deep(.el-input__count) {
   background: transparent;
-  color: var(--app-text-subtle);
+  color: $text-subtle;
 }
 
 /* 表单兜底提示：时间换算不出来 / 可留空时给一句说明，不再标红报错 */
 .field-hint {
   width: 100%;
   margin-top: 6px;
-  font-size: var(--fs-xs);
+  font-size: 12px;
   line-height: 1.6;
-  color: var(--app-text-subtle);
+  color: $text-subtle;
 
   &.is-warn {
     color: var(--warn-text);
@@ -1000,10 +1066,10 @@ function removeReminder(hours: number): void {
 
 .option-dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 8px;
-  border-radius: var(--radius-pill);
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
   vertical-align: middle;
 }
 
@@ -1016,33 +1082,36 @@ function removeReminder(hours: number): void {
 }
 
 .compare-col {
-  @include inner-card(false);
   display: flex;
   flex-direction: column;
-  padding: 20px;
+  padding: 18px 20px;
+  border-radius: $radius-md;
+}
+
+.source-col {
+  border: 1px solid $line;
+  background: var(--chip-bg);
 }
 
 .summary-col {
-  border-color: tint(ai, 30%);
-  background:
-    linear-gradient(var(--ai-soft), var(--ai-soft)),
-    var(--surface-inner);
+  border: 1px solid rgba($ai, 0.35);
+  background: $ai-soft;
 }
 
 .col-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 12px;
 }
 
 .col-title {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: var(--fs-base);
-  font-weight: 600;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
   color: var(--app-text);
 }
 
@@ -1051,12 +1120,12 @@ function removeReminder(hours: number): void {
 }
 
 .col-meta {
-  font-size: var(--fs-xs);
-  color: var(--app-text-subtle);
+  font-size: 12px;
+  color: $text-subtle;
 }
 
 .source-text {
-  font-size: var(--fs-sm);
+  font-size: 13px;
   line-height: 1.9;
   color: var(--app-text-muted);
   white-space: pre-wrap;
@@ -1067,7 +1136,7 @@ function removeReminder(hours: number): void {
   position: relative;
   overflow: hidden;
   /* 高度由内联 max-height 控制，这里只负责过渡动画 */
-  transition: max-height 0.34s var(--ease);
+  transition: max-height 0.34s ease;
 
   /* 底部渐隐遮罩：常驻但默认透明，收起/展开时才有淡出动画 */
   &::after {
@@ -1094,19 +1163,17 @@ function removeReminder(hours: number): void {
   align-items: center;
   gap: 4px;
   align-self: flex-start;
-  height: 28px;
-  margin-top: 8px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-sm);
+  height: 26px;
+  margin-top: 6px;
+  padding: 0 2px;
+  font-size: 12.5px;
   font-weight: 600;
-  color: var(--brand);
-  @include transition(background, color, transform);
+  color: $brand;
 
   .icon {
     width: 14px;
     height: 14px;
-    transition: transform 0.28s var(--ease);
+    transition: transform 0.28s ease;
 
     &.is-flipped {
       transform: rotate(180deg);
@@ -1115,11 +1182,8 @@ function removeReminder(hours: number): void {
 
   &:hover,
   &:focus-visible {
-    background: var(--brand-soft);
-  }
-
-  &:active {
-    transform: scale(0.98);
+    background: transparent;
+    opacity: 0.82;
   }
 }
 
@@ -1128,9 +1192,9 @@ function removeReminder(hours: number): void {
   align-items: center;
   gap: 6px;
   margin-top: auto;
-  padding-top: 16px;
-  font-size: var(--fs-xs);
-  color: var(--app-text-subtle);
+  padding-top: 14px;
+  font-size: 12px;
+  color: $text-subtle;
 
   .icon {
     width: 14px;
@@ -1139,14 +1203,19 @@ function removeReminder(hours: number): void {
 }
 
 .ai-badge {
-  @include ai-badge;
+  height: 18px;
   padding: 0 6px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, $ai, $ai-deep);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
   line-height: 18px;
   letter-spacing: 0.04em;
 }
 
 .summary-text {
-  font-size: var(--fs-base);
+  font-size: 13.5px;
   font-weight: 600;
   line-height: 1.75;
   color: var(--ai-text);
@@ -1166,7 +1235,7 @@ function removeReminder(hours: number): void {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: var(--fs-sm);
+  font-size: 12.8px;
   line-height: 1.7;
   color: var(--app-text-muted);
 }
@@ -1176,10 +1245,10 @@ function removeReminder(hours: number): void {
   width: 18px;
   height: 18px;
   margin-top: 2px;
-  border-radius: var(--radius-pill);
-  background: tint(ai, 18%);
+  border-radius: 6px;
+  background: var(--ai-soft);
   color: var(--ai-text);
-  font-size: var(--fs-xs);
+  font-size: 11px;
   font-weight: 700;
   line-height: 18px;
   text-align: center;
@@ -1191,9 +1260,9 @@ function removeReminder(hours: number): void {
 }
 
 .key-points-empty {
-  margin-top: 12px;
-  font-size: var(--fs-sm);
-  color: var(--app-text-subtle);
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: $text-subtle;
 }
 
 .summary-points {
@@ -1204,19 +1273,19 @@ function removeReminder(hours: number): void {
   li {
     position: relative;
     padding-left: 14px;
-    font-size: var(--fs-sm);
+    font-size: 12.5px;
     line-height: 1.9;
     color: var(--app-text-muted);
 
     &::before {
       content: "";
       position: absolute;
-      top: 10px;
+      top: 9px;
       left: 2px;
       width: 5px;
       height: 5px;
-      border-radius: var(--radius-pill);
-      background: tint(ai, 65%);
+      border-radius: 50%;
+      background: rgba($ai, 0.65);
     }
   }
 }
@@ -1225,13 +1294,13 @@ function removeReminder(hours: number): void {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .ai-tag {
-  border-color: tint(ai, 35%);
+  border-color: rgba($ai, 0.35);
   background: var(--chip-bg);
-  color: var(--ai-text);
+  color: $ai-deep;
   font-weight: 500;
 }
 
@@ -1239,36 +1308,35 @@ function removeReminder(hours: number): void {
 .override-switch {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   margin-left: auto;
   cursor: pointer;
 }
 
 .override-label {
-  font-size: var(--fs-sm);
-  color: var(--app-text-muted);
+  font-size: 12.5px;
+  color: $text-muted;
 }
 
 .remind-tip {
-  @include inner-card(false);
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  margin-top: 20px;
-  padding: 12px 16px;
-  border-color: tint(ai, 24%);
-  background:
-    linear-gradient(var(--ai-soft), var(--ai-soft)),
-    var(--surface-inner);
-  box-shadow: none;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba($ai, 0.22);
+  border-radius: $radius-md;
+  background: rgba($ai, 0.07);
 
   .icon {
+    width: 15px;
+    height: 15px;
     margin-top: 3px;
-    color: var(--ai);
+    color: $ai-deep;
   }
 
   p {
-    font-size: var(--fs-sm);
+    font-size: 12.5px;
     line-height: 1.75;
     color: var(--app-text-muted);
   }
@@ -1281,13 +1349,13 @@ function removeReminder(hours: number): void {
 .remind-row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-top: 20px;
+  gap: 14px;
+  margin-top: 18px;
   flex-wrap: wrap;
 }
 
 .remind-label {
-  font-size: var(--fs-sm);
+  font-size: 13px;
   font-weight: 600;
   color: var(--app-text);
 }
@@ -1302,113 +1370,81 @@ function removeReminder(hours: number): void {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--app-line);
-  border-radius: var(--radius-pill);
+  padding: 5px 12px;
+  border: 1px solid $line;
+  border-radius: 999px;
   background: var(--chip-bg);
-  font-size: var(--fs-sm);
+  font-size: 12.5px;
   color: var(--app-text-muted);
-  @include transition(border-color, background, color);
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
 
   .icon {
-    width: 14px;
-    height: 14px;
-    color: var(--app-text-subtle);
+    width: 13px;
+    height: 13px;
+    color: $text-subtle;
   }
 
   &.is-manual {
-    padding-right: 4px;
-    border-color: tint(ai, 40%);
-    background: tint(ai, 8%);
+    border-color: rgba($ai, 0.4);
+    background: rgba($ai, 0.06);
     color: var(--ai-text);
 
     .icon {
-      color: var(--ai);
+      color: $ai;
     }
   }
 }
 
 .chip-remove {
-  display: inline-grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
   margin-left: 2px;
-  padding: 0;
+  padding: 0 2px;
   border: none;
-  border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--app-text-subtle);
-  font-size: var(--fs-base);
+  color: $text-subtle;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
-  @include transition(color, background, transform);
+  transition: color 0.2s ease;
 
-  &:hover,
-  &:focus-visible {
-    background: tint(danger, 12%);
-    color: var(--danger);
-  }
-
-  &:focus-visible {
-    outline-color: tint(danger, 45%);
-    outline-offset: 1px;
-  }
-
-  &:active {
-    transform: scale(0.9);
+  &:hover {
+    color: #ef4444;
   }
 }
 
 .reminder-empty {
-  font-size: var(--fs-sm);
-  color: var(--app-text-subtle);
+  font-size: 12.5px;
+  color: $text-subtle;
 }
 
 .manual-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 16px;
+  gap: 10px;
+  margin-top: 14px;
   flex-wrap: wrap;
 }
 
 .preset-select {
-  width: 200px;
-
-  :deep(.el-select__wrapper) {
-    min-height: 36px;
-    border-radius: var(--radius-sm);
-  }
+  width: 190px;
 }
 
 .add-btn {
-  height: 36px;
-  padding: 0 18px;
-  border-radius: var(--radius-sm);
-  @include lift-button;
+  height: 34px;
+  border-radius: $radius-sm;
 }
 
 .remind-hint {
   margin-top: 12px;
-  font-size: var(--fs-xs);
-  color: var(--app-text-subtle);
+  font-size: 12px;
+  color: $text-subtle;
 }
 
 /* ---------------- 响应式 ---------------- */
-@include mobile {
+@media (max-width: 760px) {
   .action-bar {
     align-items: flex-start;
-  }
-
-  .bar-left {
-    align-items: flex-start;
-    gap: 8px;
-  }
-
-  .panel {
-    padding: 20px 16px;
   }
 
   .form-row,

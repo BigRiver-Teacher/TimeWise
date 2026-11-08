@@ -203,14 +203,29 @@ const filters: Array<{ value: ArchiveFilter; label: string }> = [
 </template>
 
 <style scoped lang="scss">
-.archive-page {
-  --el-text-color-regular: var(--app-text);
-  --el-border-radius-base: var(--radius-sm);
+$brand: #4f46e5;
+$brand-soft: var(--brand-soft);
+$text: var(--app-text);
+$text-muted: var(--app-text-muted);
+$text-subtle: var(--app-text-subtle);
+$surface: var(--app-surface);
+$line: var(--app-line);
+$radius-lg: 16px;
+$radius-md: 12px;
+$shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
 
-  max-width: var(--content-max);
+.archive-page {
+  --el-color-primary: #{$brand};
+  --el-color-primary-light-3: #847eed;
+  --el-color-primary-light-8: #dcdafa;
+  --el-color-primary-light-9: #edeefc;
+  --el-text-color-regular: #{$text};
+  --el-border-radius-base: 8px;
+
+  max-width: 1080px;
   margin: 0 auto;
-  color: var(--app-text);
-  font-size: var(--fs-base);
+  color: $text;
+  font-size: 14px;
 }
 
 .icon {
@@ -220,82 +235,90 @@ const filters: Array<{ value: ArchiveFilter; label: string }> = [
 }
 
 .page-head {
-  @include page-head;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
 }
 
 .page-title {
-  @include page-title;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
 }
 
 .page-subtitle {
-  @include page-subtitle;
+  margin-top: 6px;
+  font-size: 13px;
+  color: $text-muted;
 }
 
 .filter-group :deep(.el-radio-button__inner) {
-  padding: 8px 14px;
-  border-color: var(--app-line);
-  background: var(--surface-inner);
-  box-shadow: none;
-  color: var(--app-text-muted);
+  border-color: $line;
+  background: $surface;
+  color: $text-muted;
   font-weight: 500;
-  @include transition;
-}
-
-.filter-group :deep(.el-radio-button__inner:hover) {
-  color: var(--brand);
+  padding: 8px 14px;
+  box-shadow: none;
 }
 
 .filter-group :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  border-color: tint(brand, 45%);
-  background: var(--brand-soft);
+  background: $brand-soft;
+  border-color: rgba($brand, 0.45);
+  color: $brand;
   box-shadow: none;
-  color: var(--brand);
 }
 
-.filter-group :deep(.el-radio-button__original-radio:focus-visible + .el-radio-button__inner) {
-  outline: 2px solid var(--brand-ring);
-  outline-offset: 2px;
-}
-
-/* ---------------- 统计 ---------------- */
 .stat-row {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
   gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 16px;
 }
 
 .stat-pill {
-  @include inner-card(false);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
 
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 14px 16px;
+  align-items: baseline;
+  gap: 6px;
+  padding: 10px 16px;
 
   strong {
-    color: var(--brand);
-    font-size: var(--fs-xl);
+    font-size: 17px;
     font-weight: 700;
-    line-height: 1.15;
+    color: $brand;
     font-variant-numeric: tabular-nums;
 
     small {
-      margin-left: 2px;
-      font-size: var(--fs-sm);
+      font-size: 11px;
       font-weight: 600;
     }
   }
 
   span {
-    color: var(--app-text-muted);
-    font-size: var(--fs-xs);
+    font-size: 12.5px;
+    color: $text-muted;
   }
 }
 
-/* ---------------- 列表 ---------------- */
 .panel {
-  @include glass-panel(8px 24px);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+
+  padding: 6px 24px;
 }
 
 .archive-list {
@@ -306,19 +329,12 @@ const filters: Array<{ value: ArchiveFilter; label: string }> = [
 
 .archive-item {
   display: flex;
-  gap: 12px;
-  margin: 0 -12px;
-  padding: 16px 12px;
+  gap: 14px;
+  padding: 18px 0;
   border-bottom: 1px solid var(--app-line-soft);
-  border-radius: var(--radius-md);
-  @include transition(background);
 
   &:last-child {
     border-bottom: none;
-  }
-
-  &:hover {
-    background: var(--chip-bg);
   }
 }
 
@@ -330,8 +346,8 @@ const filters: Array<{ value: ArchiveFilter; label: string }> = [
   margin-top: 1px;
   flex-shrink: 0;
   border-radius: 50%;
-  background: tint(success, 14%);
-  color: var(--success);
+  background: var(--success-soft);
+  color: #10b981;
 
   .icon {
     width: 14px;
@@ -348,63 +364,50 @@ const filters: Array<{ value: ArchiveFilter; label: string }> = [
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .item-title {
-  color: var(--app-text);
-  font-size: var(--fs-base);
+  font-size: 14px;
   font-weight: 600;
+  color: $text;
 }
 
 .item-type {
   flex-shrink: 0;
-  border-color: var(--app-line);
+  border-color: $line;
   background: var(--chip-bg);
   color: var(--app-text-muted);
-  font-size: var(--fs-xs);
   font-weight: 500;
+  font-size: 11.5px;
 }
 
 .item-meta {
-  margin-top: 4px;
-  color: var(--app-text-subtle);
-  font-size: var(--fs-xs);
+  margin-top: 5px;
+  font-size: 12px;
+  color: $text-subtle;
 }
 
 .item-summary {
   margin-top: 6px;
-  color: var(--app-text-muted);
-  font-size: var(--fs-sm);
+  font-size: 12.5px;
   line-height: 1.7;
+  color: var(--app-text-muted);
 }
 
 .empty-hint {
   margin-top: 2px;
-  color: var(--app-text-subtle);
-  font-size: var(--fs-sm);
+  font-size: 12.5px;
+  color: $text-subtle;
 }
 
-@include mobile {
-  .stat-row {
-    gap: 8px;
-  }
-
-  .stat-pill {
-    padding: 12px;
-
-    strong {
-      font-size: var(--fs-lg);
-    }
+@media (max-width: 720px) {
+  .page-title {
+    font-size: 20px;
   }
 
   .panel {
     padding: 4px 16px;
-  }
-
-  .archive-item {
-    margin: 0 -8px;
-    padding: 14px 8px;
   }
 }
 </style>
