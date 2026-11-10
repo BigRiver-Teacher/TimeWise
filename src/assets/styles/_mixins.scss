@@ -185,3 +185,22 @@ $bp-tablet: 1024px;
     transform: translateY(0);
   }
 }
+
+/* =====================================================================
+   批次 1 新增工具（只增不改）—— 批次 2-5 各页迁移时逐步启用
+   ===================================================================== */
+
+// 错峰入场延迟：依赖宿主元素上已有的 rise-in 动画与 --i 序号变量。
+// --i 超过 $cap 后封顶，避免长列表末尾的卡片迟到近 1s 才出现。
+@mixin stagger-delay($step: 45ms, $cap: 8) {
+  animation-delay: calc(min(var(--i, 0), #{$cap}) * #{$step});
+}
+
+// 多行截断 + 省略号（替代各页手写的 -webkit-box 三件套）
+@mixin line-clamp($lines) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: #{$lines};
+  line-clamp: #{$lines};
+  overflow: hidden;
+}

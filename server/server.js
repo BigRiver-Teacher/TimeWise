@@ -4,6 +4,8 @@ const express = require('express');
 const cors = require('cors');
 const WordExtractor = require('word-extractor');
 const db = require('./db');
+// 与迁移脚本共用同一套时间标准化逻辑，保证接口写入和修数据结果一致
+const { normalizeMemoTime } = require('./fix-time');
 
 const app = express();
 const PORT = 3000;
@@ -26,6 +28,9 @@ function toMemo(row) {
     completed: Boolean(row.completed),
     // keyPoints 在库里是 JSON 字符串，出库时还原成数组给前端直接用
     keyPoints: parseKeyPoints(row.keyPoints),
+    // 提醒配置保持 JSON 字符串出库，解析与兜底由前端负责
+    reminderConfig:
+      typeof row.reminderConfig === 'string' ? row.reminderConfig : '',
   };
 }
 
@@ -73,6 +78,28 @@ function normalizeCompleted(value) {
   if (typeof value === 'boolean') return value;
   if (value === 0 || value === 1) return Boolean(value);
   return null;
+}
+
+/**
+ * reminderConfig 统一按 TEXT 存取：只接受字符串（前端序列化后的 JSON），
+ * 其他类型视为非法，更新场景沿用 fallback（即库中原值）。
+ */
+function normalizeReminderConfig(value, fallback = '') {
+  return typeof value === 'string' ? value : fallback;
+}
+
+/**
+ * 当前本地时间，格式 "YYYY-MM-DD HH:mm:ss"，
+ * 与库里 time / createdAt 的格式保持一致，便于直接比较。
+ */
+function formatLocalNow() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, '0');
+
+  return [
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`,
+  ].join(' ');
 }
 
 function normalizePriority(value) {
@@ -123,9 +150,15 @@ app.post('/api/memos', (req, res) => {
 
     const completed = normalizeCompleted(body.completed) ?? false;
 
+    // 以请求时刻为基准把相对时间词一次性固化；无法解析直接拒绝，绝不原样落库
+    const time = normalizeMemoTime(body.time, new Date());
+    if (!time.ok) {
+      return res.status(400).json({ error: `time 不合法：${time.reason}` });
+    }
+
     const info = insertStmt.run({
       title,
-      time: normalizeText(body.time, ''),
+      time: time.value,
       priority: normalizePriority(body.priority),
       type: normalizeText(body.type, '日常'),
       aiSummary: normalizeText(body.aiSummary, ''),
@@ -169,7 +202,12 @@ app.put('/api/memos/:id', (req, res) => {
   }
 
   if (body.time !== undefined) {
-    updates.time = normalizeText(body.time, existing.time);
+    // 以原记录的 createdAt 为基准换算；只更新传入的字段，其他列保持不动
+    const time = normalizeMemoTime(body.time, existing.createdAt);
+    if (!time.ok) {
+      return res.status(400).json({ error: `time 不合法：${time.reason}` });
+    }
+    updates.time = time.value;
   }
   if (body.type !== undefined) {
     updates.type = normalizeText(body.type, existing.type);
@@ -187,12 +225,22 @@ app.put('/api/memos/:id', (req, res) => {
   if (body.priority !== undefined) {
     updates.priority = normalizePriority(body.priority);
   }
+  // reminderConfig 只收字符串，其他类型保留原值，避免被一次脏请求清空
+  if (body.reminderConfig !== undefined) {
+    updates.reminderConfig = normalizeReminderConfig(
+      body.reminderConfig,
+      existing.reminderConfig || '',
+    );
+  }
   if (body.completed !== undefined) {
     const completed = normalizeCompleted(body.completed);
     if (completed === null) {
       return res.status(400).json({ error: 'completed 必须是布尔值' });
     }
     updates.completed = completed ? 1 : 0;
+    // 完成时间只跟随完成状态显式变更：
+    // 完成 → 写入当前本地时间（重复完成也覆盖为新值）；取消完成 → 清空
+    updates.completedAt = completed ? formatLocalNow() : '';
   }
 
   const fields = Object.keys(updates);

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { RouterView } from "vue-router";
 import {
   Calendar,
@@ -13,139 +14,120 @@ import {
 } from "@element-plus/icons-vue";
 import AIAssistant from "@/components/AIAssistant.vue";
 import { useMemoStore } from "@/stores/memo";
+import { useSettingsStore } from "@/stores/settings";
+import { REMINDER_ADVANCE_RULES } from "@/constants/reminder";
+import { isAbsoluteTime, parseMemoTime } from "@/utils/memoTime";
 
 /* ---------------------------- 全局任务提醒 ---------------------------- */
-/** 截止前 30 分钟内提醒 */
-const REMIND_WINDOW_MS = 30 * 60 * 1000;
 /** 每 60 秒检查一次 */
 const CHECK_INTERVAL_MS = 60 * 1000;
-/** 已提醒过的 memo id，避免同一任务重复弹通知 */
-const remindedIds = new Set<number>();
+const HOUR_MS = 60 * 60 * 1000;
+/** 已提醒过的 key：`memoId_档位小时`，不同档位各自提醒一次 */
+const remindedKeys = new Set<string>();
 let reminderTimer: ReturnType<typeof setInterval> | undefined;
+/** 权限申请只发起一次，避免每次点铃铛都弹窗 */
+let permissionRequested = false;
 
 const memoStore = useMemoStore();
+const settingsStore = useSettingsStore();
 
 /**
- * 把自由格式的 time 字段转成 Date：
- * 「2026-11-05 18:00」「11 月 20 日 23:59」「今天 18:00」「明天 09:30」「周五 16:00」
- * 无法识别出具体时间点时返回 null（例如「本周内」「下周一」）。
+ * 只接受绝对时间：优先走统一解析器的绝对时间分支，
+ * 其余交给 new Date()；解析不了直接跳过，绝不在轮询里重解释中文相对词。
  */
-function parseMemoTime(raw: string): Date | null {
-  const text = raw.trim();
+function parseDueTime(raw: string): Date | null {
+  const text = typeof raw === "string" ? raw.trim() : "";
   if (!text) return null;
 
-  // 1) 带年份的完整日期
-  const full = text.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/);
-  if (full) {
-    return new Date(
-      Number(full[1]),
-      Number(full[2]) - 1,
-      Number(full[3]),
-      Number(full[4] ?? 0),
-      Number(full[5] ?? 0),
-    );
-  }
+  if (isAbsoluteTime(text)) return parseMemoTime(text);
 
-  // 2) 没有具体的「时:分」就跳过
-  const clock = text.match(/(\d{1,2}):(\d{2})/);
-  if (!clock) return null;
-
-  const hour = Number(clock[1]);
-  const minute = Number(clock[2]);
-
-  const now = new Date();
-  const target = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    hour,
-    minute,
-  );
-
-  // 3) X 月 Y 日
-  const monthDay = text.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
-  if (monthDay) {
-    target.setMonth(Number(monthDay[1]) - 1, Number(monthDay[2]));
-    return target;
-  }
-
-  // 4) 相对日期
-  if (text.includes("后天")) {
-    target.setDate(target.getDate() + 2);
-  } else if (/明[天早晚]/.test(text)) {
-    target.setDate(target.getDate() + 1);
-  }
-
-  // 5) 周X / 星期X / 礼拜X
-  const weekday = text.match(/(?:周|星期|礼拜)([一二三四五六日天1-7])/);
-  const weekdayKey = weekday?.[1];
-  if (weekdayKey) {
-    const weekMap: Record<string, number> = {
-      一: 1,
-      二: 2,
-      三: 3,
-      四: 4,
-      五: 5,
-      六: 6,
-      日: 0,
-      天: 0,
-      "1": 1,
-      "2": 2,
-      "3": 3,
-      "4": 4,
-      "5": 5,
-      "6": 6,
-      "7": 0,
-    };
-    const targetDay = weekMap[weekdayKey];
-    if (targetDay !== undefined) {
-      target.setDate(target.getDate() + ((targetDay - now.getDay() + 7) % 7));
-    }
-  }
-
-  return target;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** 申请浏览器通知权限（只在还未决定时申请一次） */
-async function requestNotificationPermission(): Promise<void> {
-  if (typeof Notification === "undefined") {
-    console.warn("[reminder] 当前浏览器不支持通知");
+/** 某条任务的某个档位是否已经提醒过 */
+function reminderKey(memoId: number, hours: number): string {
+  return `${memoId}_${hours}`;
+}
+
+/** 清理某条任务的全部提醒记录（删除 / 负 id 换成真实 id 时调用） */
+function forgetMemoReminders(memoId: number): void {
+  const prefix = `${memoId}_`;
+  for (const key of remindedKeys) {
+    if (key.startsWith(prefix)) remindedKeys.delete(key);
+  }
+}
+
+/**
+ * 铃铛入口的权限引导：
+ * - default → 首次点击时申请一次
+ * - granted → 直接放行（正常进入提醒中心）
+ * - denied → 不弹窗，只给轻提示
+ * - 浏览器不支持通知 → 放行，不打断导航
+ */
+async function handleBellClick(event: MouseEvent): Promise<void> {
+  const target = event.target as HTMLElement | null;
+  if (!target?.closest('[aria-label="提醒中心"]')) return;
+  if (typeof Notification === "undefined") return;
+
+  if (Notification.permission === "granted") return;
+  if (Notification.permission === "denied") {
+    ElMessage.warning("请在浏览器设置中允许通知");
     return;
   }
-  if (Notification.permission !== "default") return;
+  if (permissionRequested) return;
 
+  permissionRequested = true;
   try {
-    await Notification.requestPermission();
+    const result = await Notification.requestPermission();
+    if (result === "denied") {
+      ElMessage.warning("请在浏览器设置中允许通知");
+    }
   } catch (error) {
     console.warn("[reminder] 通知权限申请失败：", error);
   }
 }
 
-/** 检查一次「30 分钟内到期」的待办并弹通知 */
-function checkUpcomingMemos(): void {
-  if (typeof Notification === "undefined") return;
-  if (Notification.permission !== "granted") return;
+/** 某个档位到点时如何提示：开关打开发系统通知，关闭则只留页面内轻提示 */
+function pushReminder(title: string, hours: number): void {
+  const text = `你的任务「${title}」还有不到 ${hours} 小时截止`;
 
+  if (settingsStore.inApp && typeof Notification !== "undefined" && Notification.permission === "granted") {
+    try {
+      new Notification("知时 TimeWise 提醒", { body: text });
+      return;
+    } catch (error) {
+      console.warn("[reminder] 弹出通知失败：", error);
+    }
+  }
+
+  // 关闭应用内提醒 / 权限未授予 / 通知构造失败：保留页面内轻提示
+  ElMessage.info(text);
+}
+
+/** 按优先级分档检查：每条任务的每个档位各自触发一次 */
+function checkUpcomingMemos(): void {
   const now = Date.now();
 
   for (const memo of memoStore.memos) {
     if (memo.completed) continue;
-    if (remindedIds.has(memo.id)) continue;
 
-    const due = parseMemoTime(memo.time);
+    const due = parseDueTime(memo.time);
     if (!due) continue;
 
-    const diff = due.getTime() - now;
-    // 只提醒「未来 30 分钟内（且还没过期）」的任务
-    if (diff <= 0 || diff >= REMIND_WINDOW_MS) continue;
+    const remaining = due.getTime() - now;
+    if (remaining <= 0) continue;
 
-    try {
-      new Notification("知时 TimeWise 提醒", {
-        body: `你的任务「${memo.title}」还有不到 30 分钟截止！`,
-      });
-      remindedIds.add(memo.id);
-    } catch (error) {
-      console.warn("[reminder] 弹出通知失败：", error);
+    const tiers = REMINDER_ADVANCE_RULES[memo.priority] ?? REMINDER_ADVANCE_RULES.low;
+
+    for (const hours of tiers) {
+      const key = reminderKey(memo.id, hours);
+      if (remindedKeys.has(key)) continue;
+      // 还没进入这一档的提醒窗口
+      if (remaining > hours * HOUR_MS) continue;
+
+      remindedKeys.add(key);
+      pushReminder(memo.title, hours);
     }
   }
 }
@@ -185,16 +167,54 @@ function handlePointerMove(event: MouseEvent): void {
   if (parallaxFrame === 0) parallaxFrame = requestAnimationFrame(flushParallax);
 }
 
+/** 运行时切换「减少动效」偏好：立即启停视差监听 */
+function handleReduceMotionChange(event: MediaQueryListEvent): void {
+  if (event.matches) {
+    window.removeEventListener("mousemove", handlePointerMove);
+    if (parallaxFrame) {
+      cancelAnimationFrame(parallaxFrame);
+      parallaxFrame = 0;
+    }
+    parallaxX = 0;
+    parallaxY = 0;
+    const root = document.documentElement;
+    root.style.setProperty("--mouse-x", "0px");
+    root.style.setProperty("--mouse-y", "0px");
+    return;
+  }
+
+  window.addEventListener("mousemove", handlePointerMove, { passive: true });
+}
+
+/**
+ * 任务被删除 / 负 id 换成真实 id 后，清掉对应的已提醒记录，
+ * 避免 id 复用时被旧的去重 key 挡住。
+ */
+watch(
+  () => memoStore.memos.map((memo) => memo.id),
+  (ids, previous) => {
+    if (!previous) return;
+    const alive = new Set(ids);
+    for (const id of previous) {
+      if (!alive.has(id)) forgetMemoReminders(id);
+    }
+  },
+);
+
 onMounted(() => {
-  void requestNotificationPermission();
+  // 首次打开不主动申请权限，等用户点击铃铛再引导
   checkUpcomingMemos();
   reminderTimer = setInterval(checkUpcomingMemos, CHECK_INTERVAL_MS);
+
+  // 铃铛入口的权限引导（捕获阶段，不影响原有导航行为）
+  document.addEventListener("click", handleBellClick, true);
 
   // 背景图标视差：只有系统允许动效时才监听
   if (!isReducedMotion()) {
     // passive：不阻断页面滚动
     window.addEventListener("mousemove", handlePointerMove, { passive: true });
   }
+  reduceMotionQuery?.addEventListener("change", handleReduceMotionChange);
 });
 
 onUnmounted(() => {
@@ -203,6 +223,10 @@ onUnmounted(() => {
     clearInterval(reminderTimer);
     reminderTimer = undefined;
   }
+
+  // 清理权限引导监听、动效偏好监听
+  document.removeEventListener("click", handleBellClick, true);
+  reduceMotionQuery?.removeEventListener("change", handleReduceMotionChange);
 
   // 清理视差监听与未执行完的动画帧
   window.removeEventListener("mousemove", handlePointerMove);
@@ -392,8 +416,8 @@ onUnmounted(() => {
   }
 }
 
-/* 移动端减少几枚，避免拥挤 */
-@media (max-width: 768px) {
+/* 移动端减少几枚，避免拥挤（断点统一走 _mixins 的 mobile(768px)） */
+@include mobile {
   .icon-3,
   .icon-7 {
     display: none;

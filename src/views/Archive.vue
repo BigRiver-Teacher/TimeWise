@@ -26,7 +26,7 @@ interface ArchivedItem {
   /** 「已完成 · 距截止还有 2 天」这类说明 */
   timing: string
   summary: string
-  /** 是否落在最近 7 天内（用截止时间近似完成时间） */
+  /** 是否落在最近 7 天内（以真实完成时间为准） */
   recent: boolean
 }
 
@@ -66,10 +66,13 @@ const completedMemos = computed<MemoItem[]>(() =>
 
 const archivedItems = computed<ArchivedItem[]>(() => {
   const now = Date.now()
+  const recentFrom = now - 7 * DAY_MS
 
   return completedMemos.value.map((memo) => {
     const due = parseMemoTime(memo.time)
-    const dueMs = due ? due.getTime() : null
+    const completedAtText = memo.completedAt ?? ''
+    const completedAt = completedAtText ? parseMemoTime(completedAtText) : null
+    const completedMs = completedAt ? completedAt.getTime() : null
 
     return {
       id: memo.id,
@@ -78,8 +81,9 @@ const archivedItems = computed<ArchivedItem[]>(() => {
       dueAt: memo.time || '未记录时间',
       timing: describeTiming(due),
       summary: memo.aiSummary || '（该条目没有 AI 摘要）',
-      // 提前完成时截止时间在未来，也算「最近」——这里用绝对距离判断
-      recent: dueMs !== null && Math.abs(now - dueMs) <= 7 * DAY_MS,
+      // 以真实完成时间为准：过去 7 天内完成才算「最近」；
+      // 没有完成时间的历史条目一律不计入
+      recent: completedMs !== null && completedMs >= recentFrom && completedMs <= now,
     }
   })
 })
@@ -92,35 +96,56 @@ const filtered = computed<ArchivedItem[]>(() =>
 /** 累计完成 */
 const totalCompleted = computed<number>(() => completedMemos.value.length)
 
-/** 能解析出截止时间的完成条目，用来算准时率与平均提前量 */
-const timedCompleted = computed<Date[]>(() =>
-  completedMemos.value
-    .map((memo) => parseMemoTime(memo.time))
-    .filter((date): date is Date => date !== null),
-)
+/** 能同时解析出真实完成时间与截止时间的已完成条目；任一缺失 / 不可解析则整体跳过 */
+interface TimedCompletion {
+  completedAt: Date
+  due: Date
+}
 
-/**
- * 准时完成率：没有真实完成时间，用截止时间近似——
- * 截止时间还没到就已完成 → 算准时；截止已过 → 算超期。
- * 一条时间都解析不出来时退回演示值，避免页面出现 0%。
- */
-const onTimeRate = computed<number>(() => {
-  const dates = timedCompleted.value
-  if (!dates.length) return 90 + (totalCompleted.value % 10)
+const timedCompletions = computed<TimedCompletion[]>(() => {
+  const result: TimedCompletion[] = []
 
-  const now = Date.now()
-  const onTime = dates.filter((date) => date.getTime() >= now).length
-  return Math.round((onTime / dates.length) * 100)
+  for (const memo of completedMemos.value) {
+    const completedAtText = memo.completedAt ?? ''
+    if (!completedAtText) continue
+
+    const completedAt = parseMemoTime(completedAtText)
+    const due = parseMemoTime(memo.time)
+    if (!completedAt || !due) continue
+
+    result.push({ completedAt, due })
+  }
+
+  return result
 })
 
-/** 平均提前量：截止时间与当前时间的平均距离，按「天 / 小时」展示 */
-const averageLead = computed<{ value: string; unit: string }>(() => {
-  const dates = timedCompleted.value
-  if (!dates.length) return { value: '—', unit: '' }
+/**
+ * 准时完成率：completedAt <= time 视为准时。
+ * 分子是准时条目数，分母是「完成时间与截止时间都可解析」的条目数；
+ * 分母为 0 时返回 null，由页面显示占位符「—」。
+ */
+const onTimeRate = computed<number | null>(() => {
+  const items = timedCompletions.value
+  if (!items.length) return null
 
-  const now = Date.now()
-  const total = dates.reduce((sum, date) => sum + Math.abs(date.getTime() - now), 0)
-  const avgMs = total / dates.length
+  const onTime = items.filter(
+    (item) => item.completedAt.getTime() <= item.due.getTime(),
+  ).length
+  return Math.round((onTime / items.length) * 100)
+})
+
+/** 平均提前量：只统计准时条目，取（截止时间 − 完成时间）的平均值 */
+const averageLead = computed<{ value: string; unit: string }>(() => {
+  const onTimeItems = timedCompletions.value.filter(
+    (item) => item.completedAt.getTime() <= item.due.getTime(),
+  )
+  if (!onTimeItems.length) return { value: '—', unit: '' }
+
+  const total = onTimeItems.reduce(
+    (sum, item) => sum + (item.due.getTime() - item.completedAt.getTime()),
+    0,
+  )
+  const avgMs = total / onTimeItems.length
   const days = avgMs / DAY_MS
 
   return days >= 1
@@ -136,13 +161,13 @@ const filters: Array<{ value: ArchiveFilter; label: string }> = [
 
 <template>
   <div class="archive-page">
-    <header class="page-head">
+    <header class="tw-page-head">
       <div>
-        <h1 class="page-title">已完成归档</h1>
-        <p class="page-subtitle">已完成条目的 AI 摘要会保留在归档里，方便随时回看。</p>
+        <h1 class="tw-page-title">已完成归档</h1>
+        <p class="tw-page-subtitle">已完成条目的 AI 摘要会保留在归档里，方便随时回看。</p>
       </div>
 
-      <el-radio-group v-model="filter" class="filter-group">
+      <el-radio-group v-model="filter" class="filter-group tw-segment">
         <el-radio-button v-for="item in filters" :key="item.value" :value="item.value">
           {{ item.label }}
         </el-radio-button>
@@ -155,7 +180,7 @@ const filters: Array<{ value: ArchiveFilter; label: string }> = [
         <span>累计完成</span>
       </div>
       <div class="stat-pill">
-        <strong>{{ onTimeRate }}<small>%</small></strong>
+        <strong>{{ onTimeRate === null ? '—' : onTimeRate }}<small v-if="onTimeRate !== null">%</small></strong>
         <span>准时完成率</span>
       </div>
       <div class="stat-pill">
@@ -164,7 +189,7 @@ const filters: Array<{ value: ArchiveFilter; label: string }> = [
       </div>
     </div>
 
-    <section class="panel">
+    <section class="tw-panel">
       <!-- 一条已完成的都没有：整块空状态 -->
       <el-empty v-if="!totalCompleted" :image-size="96" description="还没有已完成的待办">
         <p class="empty-hint">在总览页把待办勾选完成后，它们会自动收进这里。</p>
@@ -208,29 +233,19 @@ const filters: Array<{ value: ArchiveFilter; label: string }> = [
 </template>
 
 <style scoped lang="scss">
-$brand: #4f46e5;
-$brand-soft: var(--brand-soft);
 $text: var(--app-text);
 $text-muted: var(--app-text-muted);
 $text-subtle: var(--app-text-subtle);
-$surface: var(--app-surface);
-$line: var(--app-line);
-$radius-lg: 16px;
-$radius-md: 12px;
-$shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
 
 .archive-page {
-  --el-color-primary: #{$brand};
-  --el-color-primary-light-3: #847eed;
-  --el-color-primary-light-8: #dcdafa;
-  --el-color-primary-light-9: #edeefc;
+  /* EP 主色与控件底色由 main.css 全局令牌统一提供，页面不再局部覆盖 */
   --el-text-color-regular: #{$text};
-  --el-border-radius-base: 8px;
+  --el-border-radius-base: var(--radius-sm);
 
-  max-width: 1080px;
+  max-width: var(--content-max);
   margin: 0 auto;
   color: $text;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .icon {
@@ -239,42 +254,10 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   flex-shrink: 0;
 }
 
-.page-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 18px;
-}
-
-.page-title {
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-}
-
-.page-subtitle {
-  margin-top: 6px;
-  font-size: 13px;
-  color: $text-muted;
-}
-
+/* 页头 / 面板结构统一走全局 tw-*，此处只保留本页控件尺寸 */
 .filter-group :deep(.el-radio-button__inner) {
-  border-color: $line;
-  background: $surface;
-  color: $text-muted;
-  font-weight: 500;
   padding: 8px 14px;
-  box-shadow: none;
-}
-
-.filter-group :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background: $brand-soft;
-  border-color: rgba($brand, 0.45);
-  color: $brand;
-  box-shadow: none;
+  font-weight: 500;
 }
 
 .stat-row {
@@ -285,18 +268,19 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
 }
 
 .stat-pill {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-
   display: flex;
   align-items: baseline;
   gap: 6px;
   padding: 10px 16px;
-  transition: transform 0.22s var(--ease), box-shadow 0.22s ease;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  transition:
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 
   &:hover {
     transform: translateY(-2px);
@@ -304,32 +288,21 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   }
 
   strong {
-    font-size: 17px;
+    color: var(--brand);
+    font-size: var(--fs-md);
     font-weight: 700;
-    color: $brand;
     font-variant-numeric: tabular-nums;
 
     small {
-      font-size: 11px;
+      font-size: var(--fs-xs);
       font-weight: 600;
     }
   }
 
   span {
-    font-size: 12.5px;
     color: $text-muted;
+    font-size: var(--fs-sm);
   }
-}
-
-.panel {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-
-  padding: 6px 24px;
 }
 
 .archive-list {
@@ -344,10 +317,10 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   margin: 0 -12px;
   padding: 18px 12px;
   border-bottom: 1px solid var(--app-line-soft);
-  border-radius: 12px;
-  transition: background 0.22s ease;
+  border-radius: var(--radius-md);
+  transition: background var(--dur) var(--ease);
   animation: rise-in 0.4s var(--ease) backwards;
-  animation-delay: calc(var(--i, 0) * 40ms);
+  @include stagger-delay(40ms, 8);
 
   &:hover {
     background: var(--chip-bg);
@@ -367,7 +340,7 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--success-soft);
-  color: #10b981;
+  color: var(--success);
 
   .icon {
     width: 14px;
@@ -388,46 +361,66 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
 }
 
 .item-title {
-  font-size: 14px;
-  font-weight: 600;
+  min-width: 0;
   color: $text;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  @include line-clamp(2);
 }
 
 .item-type {
   flex-shrink: 0;
-  border-color: $line;
+  border-color: var(--app-line);
   background: var(--chip-bg);
   color: var(--app-text-muted);
+  font-size: var(--fs-xs);
   font-weight: 500;
-  font-size: 11.5px;
 }
 
 .item-meta {
   margin-top: 5px;
-  font-size: 12px;
   color: $text-subtle;
+  font-size: var(--fs-xs);
 }
 
 .item-summary {
   margin-top: 6px;
-  font-size: 12.5px;
-  line-height: 1.7;
   color: var(--app-text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
 }
 
 .empty-hint {
   margin-top: 2px;
-  font-size: 12.5px;
-  color: $text-subtle;
+  color: $text-muted;
+  font-size: var(--fs-sm);
 }
 
-@media (max-width: 720px) {
-  .page-title {
-    font-size: 20px;
+/* 断点统一为 _mixins 的 mobile(768px)（原 720px 与全站断点并存） */
+@include mobile {
+  .tw-panel {
+    padding: 16px;
   }
 
-  .panel {
-    padding: 4px 16px;
+  /* 统计胶囊：两列等高排布，第三项独占一行，避免最后一项上下留白失衡 */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .stat-pill {
+    justify-content: center;
+    min-height: 46px;
+
+    &:last-child {
+      grid-column: 1 / -1;
+    }
+  }
+
+  /* 给右下角 AI 悬浮球留出高度（FAB 52px + 安全距离 16px） */
+  .archive-list {
+    padding-bottom: 44px;
   }
 }
 </style>

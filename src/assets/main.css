@@ -184,8 +184,8 @@ html.dark {
   --veil-top: rgba(6, 8, 14, 0.14);
   --veil-bottom: rgba(6, 8, 14, 0.26);
 
-  /* 深色下图标可以稍明显一点 */
-  --bg-icon-opacity: 0.1;
+  /* 深色下图标只比亮色略明显，0.1 会浮出浅色块 */
+  --bg-icon-opacity: 0.075;
 
   --text-strong: #e6e8ee;
   --text-muted: #b4bac6;
@@ -442,3 +442,244 @@ body .el-card {
 .el-popper.is-light .el-textarea__inner {
   background: var(--input-bg);
 }
+
+/* =====================================================================
+   共享工具类（批次 1 新增：只增不改）
+   ---------------------------------------------------------------------
+   把各视图复制粘贴的「页头 / 玻璃面板 / 面板头 / 状态胶囊 / AI 徽标 /
+   分段选择器」收敛为全局唯一实现。旧页面在批次 2-5 迁移时删除各自的
+   本地副本；本段不修改上面任何既有令牌与旧类。
+   命名统一 tw- 前缀，避免与 Element Plus 及旧页面类名冲突。
+   ===================================================================== */
+
+/* ---------------- 页头：标题 + 副标题 + 右侧操作 ---------------- */
+.tw-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: var(--content-max);
+  margin: 0 auto 24px;
+}
+
+.tw-page-title {
+  color: var(--app-text);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.tw-page-subtitle {
+  margin-top: 6px;
+  color: var(--app-text-muted);
+  font-size: var(--fs-sm);
+}
+
+/* ---------------- 玻璃面板与面板头 ---------------- */
+.tw-panel {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  padding: 22px 24px 24px;
+}
+
+.tw-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tw-panel-title-group {
+  min-width: 0;
+}
+
+/* 图标底座：语义色用修饰类切换；尺寸定为组件级常量（单点维护） */
+.tw-panel-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.tw-panel-icon.is-ai {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--ai) 14%, transparent),
+    color-mix(in srgb, var(--ai) 6%, transparent)
+  );
+  color: var(--ai);
+}
+
+/* 图标尺寸：用 svg.icon 组合选择器，胜过页面 scoped 的 .icon[data-v]，
+   不再依赖「未迁移页的 .tw-panel 祖先」这种一次性兼容 hack */
+.tw-panel-icon svg.icon {
+  width: 19px;
+  height: 19px;
+}
+
+.tw-panel-title {
+  color: var(--app-text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.tw-panel-sub {
+  margin-top: 2px;
+  color: var(--app-text-subtle);
+  font-size: var(--fs-xs);
+}
+
+/* ---------------- 状态胶囊：换色只改 --pill-c 一个变量 ---------------- */
+.tw-status-pill {
+  --pill-c: var(--success);
+
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid color-mix(in srgb, var(--pill-c) 28%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--pill-c) 12%, transparent);
+  color: var(--pill-c);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+/* 有专用「文字级」语义令牌的变体，文字用提亮/压暗后的色保证对比度 */
+.tw-status-pill.is-success {
+  color: var(--success-text);
+}
+
+.tw-status-pill.is-warn {
+  --pill-c: var(--warn);
+  color: var(--warn-text);
+}
+
+.tw-status-pill.is-danger {
+  --pill-c: var(--danger);
+}
+
+.tw-status-pill.is-brand {
+  --pill-c: var(--brand);
+}
+
+.tw-status-pill.is-ai {
+  --pill-c: var(--ai);
+  color: var(--ai-text);
+}
+
+/* 胶囊内的呼吸点：currentColor 跟随胶囊语义色，免维护第二份色值 */
+.tw-status-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+/* ---------------- AI 徽标（全局唯一实现，紫渐变 = AI 身份色） ---------------- */
+.tw-ai-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--ai-gradient);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 18px;
+  letter-spacing: 0.04em;
+}
+
+/* ---------------- 分段选择器（el-radio-button 按钮组统一外观） ---------------- */
+.tw-segment .el-radio-button__inner {
+  border-color: var(--app-line);
+  background: var(--app-surface);
+  color: var(--app-text-muted);
+  font-weight: 500;
+  box-shadow: none;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.tw-segment .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  border-color: color-mix(in srgb, var(--brand) 45%, transparent);
+  background: var(--brand-soft);
+  color: var(--brand);
+  box-shadow: none;
+}
+
+/* 键盘焦点：沿用各页已有的内描边方案 */
+.tw-segment
+  .el-radio-button__original-radio:focus-visible
+  + .el-radio-button__inner {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 55%, transparent);
+}
+
+/* =====================================================================
+   表单控件统一（批次 5 收敛）
+   ---------------------------------------------------------------------
+   全站 el-input / el-textarea / el-select 的底色与描边只在这里定义一次：
+   底色走 --input-bg、描边走 --app-line，保证深浅主题下与玻璃面板同源。
+   页面 scoped 的 :deep 覆盖仍可在此基础上做局部尺寸调整。
+   ===================================================================== */
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  background-color: var(--input-bg);
+  box-shadow: 0 0 0 1px var(--app-line) inset;
+  transition:
+    box-shadow var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
+}
+
+.el-input__wrapper:hover,
+.el-select__wrapper:hover,
+.el-textarea__inner:hover {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 40%, transparent) inset;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow:
+    0 0 0 1px var(--brand) inset,
+    0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
+}
+
+/* 禁用态：不发光、不抬起，底色退回 --chip-bg */
+.el-input.is-disabled .el-input__wrapper,
+.el-select.is-disabled .el-select__wrapper,
+.el-textarea.is-disabled .el-textarea__inner,
+.el-input__wrapper.is-disabled,
+.el-select__wrapper.is-disabled {
+  background-color: var(--chip-bg);
+  box-shadow: 0 0 0 1px var(--app-line-soft) inset;
+}
+
+/* 弹层（对话框 / 确认框 / 下拉浮层）内的输入控件同样继承玻璃底 */
+.el-dialog .el-input__wrapper,
+.el-dialog .el-textarea__inner,
+.el-message-box .el-input__wrapper,
+.el-message-box .el-textarea__inner {
+  background-color: var(--input-bg);
+}
+

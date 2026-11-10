@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -21,7 +21,7 @@ const priorityMeta: Record<MemoPriority, { label: string; color: string }> = {
 
 /* ---------------------------- 待办数据（Pinia） ---------------------------- */
 const memoStore = useMemoStore();
-const { memos } = storeToRefs(memoStore);
+const { memos, syncing, isSynced } = storeToRefs(memoStore);
 
 /* ---------------------------- 交互状态 ---------------------------- */
 const keyword = ref("");
@@ -61,8 +61,14 @@ function handleToggleCompleted(memo: MemoItem) {
   memoStore.toggleCompleted(memo.id);
 }
 
+/** 正在确认 / 删除中的条目：连点只执行一次，避免「已删除」后再弹「删除失败」 */
+const deletingIds = new Set<number>();
+
 /** 删除待办：二次确认后调用 store 的 DELETE 接口 */
 async function handleDelete(memo: MemoItem) {
+  if (deletingIds.has(memo.id)) return;
+  deletingIds.add(memo.id);
+
   try {
     await ElMessageBox.confirm(
       `确定删除「${memo.title}」吗？删除后无法恢复。`,
@@ -74,14 +80,30 @@ async function handleDelete(memo: MemoItem) {
       },
     );
   } catch {
+    deletingIds.delete(memo.id);
     return;
   }
 
-  const removed = await memoStore.deleteMemo(memo.id);
-  if (removed) {
-    ElMessage.success("已删除该待办");
+  try {
+    const removed = await memoStore.deleteMemo(memo.id);
+    // 成功与失败提示互斥：只走其中一个分支
+    if (removed) {
+      ElMessage.success("已删除该待办");
+    } else {
+      ElMessage.error("删除失败，请检查后端服务");
+    }
+  } finally {
+    deletingIds.delete(memo.id);
+  }
+}
+
+/** 手动刷新：按钮在请求期间禁用，结束后给出明确结果反馈 */
+async function handleRefresh(): Promise<void> {
+  const synced = await memoStore.refreshMemos();
+  if (synced) {
+    ElMessage.success("已与后端同步");
   } else {
-    ElMessage.error("删除失败，请检查后端服务");
+    ElMessage.error("刷新失败，当前展示本地暂存数据");
   }
 }
 
@@ -90,10 +112,28 @@ function goToReminder() {
   router.push({ name: "reminder" });
 }
 
+/**
+ * 时间依赖：每 60 秒自增一次，与 App.vue 的轮询节奏一致。
+ * 所有「当前时间」相关的 computed 都读它，跨过午夜或任务到期时刻后统计会自动重算。
+ */
+const nowTick = ref(Date.now());
+let tickTimer: ReturnType<typeof setInterval> | undefined;
+
+onMounted(() => {
+  tickTimer = setInterval(() => {
+    nowTick.value = Date.now();
+  }, 60_000);
+});
+
+onUnmounted(() => {
+  if (tickTimer) clearInterval(tickTimer);
+  tickTimer = undefined;
+});
+
 function isTaskOverdue(timeStr: string): boolean {
   const due = parseMemoTime(timeStr);
   if (!due) return false;
-  return due.getTime() < Date.now();
+  return due.getTime() < nowTick.value;
 }
 
 const priorityWeight: Record<MemoPriority, number> = {
@@ -105,8 +145,9 @@ const priorityWeight: Record<MemoPriority, number> = {
 const NO_DUE_TIME = Number.MAX_SAFE_INTEGER;
 
 function taskRank(memo: MemoItem): number {
-  if (isTaskOverdue(memo.time)) return 2;
-  return memo.completed ? 1 : 0;
+  // 已逾期排最前；未完成待办居中；已完成收尾
+  if (!memo.completed && isTaskOverdue(memo.time)) return 0;
+  return memo.completed ? 2 : 1;
 }
 
 function taskDueValue(memo: MemoItem): number {
@@ -166,24 +207,32 @@ const emptyStateText = computed(() => {
 
 /* ---------------------------- 动态看板数据计算 ---------------------------- */
 
-// 1. 今日待办：截止时间在今天且未完成的任务数
+/** 本周起点：周一 00:00（本地时间），跨月 / 跨年都由 Date 自动进位 */
+function startOfWeek(base: Date): Date {
+  const mondayIndex = (base.getDay() + 6) % 7;
+  return new Date(base.getFullYear(), base.getMonth(), base.getDate() - mondayIndex);
+}
+
+// 1. 今日待办：今天到期、尚未过期且未完成的任务数（已逾期单独归类，不重复计入）
 const todayCount = computed(() => {
-  const now = new Date();
+  const now = new Date(nowTick.value);
   return memos.value.filter((memo) => {
     if (memo.completed) return false;
     const due = parseMemoTime(memo.time);
     if (!due) return false;
-    return (
+
+    const isToday =
       due.getFullYear() === now.getFullYear() &&
       due.getMonth() === now.getMonth() &&
-      due.getDate() === now.getDate()
-    );
+      due.getDate() === now.getDate();
+
+    return isToday && due.getTime() >= now.getTime();
   }).length;
 });
 
 // 2. 已逾期：截止时间早于当前时间且未完成的任务数
 const overdueCount = computed(() => {
-  const now = Date.now();
+  const now = nowTick.value;
   return memos.value.filter((memo) => {
     if (memo.completed) return false;
     const due = parseMemoTime(memo.time);
@@ -192,12 +241,29 @@ const overdueCount = computed(() => {
   }).length;
 });
 
-// 3. 本周完成率：已完成数 / 总任务数（如果总数为 0 则返回 0）
+// 3. 本周完成率：本周内截止（或完成）的条目里，已完成数 / 总条目数
+//    没有完成时间字段，归属与分子都按截止时间计算；无有效分母时显示 0%
 const weeklyDoneRate = computed(() => {
-  const total = memos.value.length;
-  if (total === 0) return 0;
-  const completed = memos.value.filter((memo) => memo.completed).length;
-  return Math.round((completed / total) * 100);
+  const weekStart = startOfWeek(new Date(nowTick.value));
+  const nextWeekStart = new Date(
+    weekStart.getFullYear(),
+    weekStart.getMonth(),
+    weekStart.getDate() + 7,
+  );
+  const startMs = weekStart.getTime();
+  const endMs = nextWeekStart.getTime();
+
+  const weekMemos = memos.value.filter((memo) => {
+    const due = parseMemoTime(memo.time);
+    if (!due) return false;
+    const dueMs = due.getTime();
+    return dueMs >= startMs && dueMs < endMs;
+  });
+
+  if (!weekMemos.length) return 0;
+
+  const completed = weekMemos.filter((memo) => memo.completed).length;
+  return Math.round((completed / weekMemos.length) * 100);
 });
 
 const pageSubtitle = computed(() =>
@@ -210,10 +276,47 @@ const pageSubtitle = computed(() =>
 <template>
   <div class="overview-page">
     <!-- 顶部：标题 + 搜索 + 新建 -->
-    <header class="page-head">
+    <header class="tw-page-head">
       <div class="head-text">
-        <h1 class="page-title">我的待办</h1>
-        <p class="page-subtitle">{{ pageSubtitle }}</p>
+        <h1 class="tw-page-title">我的待办</h1>
+        <p class="tw-page-subtitle">{{ pageSubtitle }}</p>
+      </div>
+
+      <div class="sync-status">
+        <span
+          class="tw-status-pill"
+          :class="isSynced ? 'is-success' : 'is-warn'"
+          :title="isSynced ? '已与后端同步' : '后端不可用，条目仅保存在本地'"
+        >
+          <i class="tw-status-dot" aria-hidden="true"></i>
+          {{ isSynced ? "已同步" : "未同步（仅本地暂存）" }}
+        </span>
+
+        <el-button
+          class="bell-btn refresh-btn"
+          circle
+          :disabled="syncing"
+          :aria-busy="syncing"
+          aria-label="刷新待办"
+          title="刷新待办"
+          @click="handleRefresh"
+        >
+          <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M20 11a8 8 0 1 0-2.3 6.6"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+            />
+            <path
+              d="M20 5v6h-6"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </el-button>
       </div>
 
       <div class="head-actions">
@@ -408,7 +511,7 @@ const pageSubtitle = computed(() =>
           <span class="list-count">{{ filteredMemos.length }} 条</span>
 
           <!-- 分类切换：待办中 / 已完成 -->
-          <el-radio-group v-model="activeTab" class="tab-switch" size="small">
+          <el-radio-group v-model="activeTab" class="tab-switch tw-segment" size="small">
             <el-radio-button value="pending">
               待办中 {{ pendingCount }}
             </el-radio-button>
@@ -432,7 +535,7 @@ const pageSubtitle = computed(() =>
           </ul>
         </div>
 
-        <el-radio-group v-model="viewMode" class="view-switch">
+        <el-radio-group v-model="viewMode" class="view-switch tw-segment">
           <el-radio-button value="card">卡片视图</el-radio-button>
           <el-radio-button value="timeline">时间轴视图</el-radio-button>
         </el-radio-group>
@@ -478,6 +581,7 @@ const pageSubtitle = computed(() =>
             :aria-label="`查看「${memo.title}」详情`"
             @click="handleCardClick(memo)"
             @keydown.enter="handleCardEnter($event, memo)"
+            @keydown.space.prevent="handleCardEnter($event, memo)"
           >
             <i class="priority-bar" aria-hidden="true"></i>
 
@@ -540,7 +644,7 @@ const pageSubtitle = computed(() =>
               </p>
 
               <p class="ai-summary">
-                <span class="ai-badge">AI</span>
+                <span class="tw-ai-badge">AI</span>
                 <span class="ai-text">{{ memo.aiSummary }}</span>
               </p>
             </div>
@@ -572,6 +676,7 @@ const pageSubtitle = computed(() =>
               :aria-label="`查看「${memo.title}」详情`"
               @click="handleCardClick(memo)"
               @keydown.enter="handleCardEnter($event, memo)"
+              @keydown.space.prevent="handleCardEnter($event, memo)"
             >
               <div class="memo-head">
                 <div class="memo-title-row">
@@ -616,7 +721,7 @@ const pageSubtitle = computed(() =>
                 {{ memo.time }}
               </p>
               <p class="ai-summary">
-                <span class="ai-badge">AI</span>
+                <span class="tw-ai-badge">AI</span>
                 <span class="ai-text">{{ memo.aiSummary }}</span>
               </p>
             </div>
@@ -628,35 +733,19 @@ const pageSubtitle = computed(() =>
 </template>
 
 <style scoped lang="scss">
-$brand: #4f46e5;
 $brand-soft: var(--brand-soft);
-$danger: #ef4444;
-$warn: #f59e0b;
-$success: #10b981;
 $text: var(--app-text);
 $text-muted: var(--app-text-muted);
 $text-subtle: var(--app-text-subtle);
 $bg: var(--app-bg);
 $surface: var(--app-surface);
 $line: var(--app-line);
-$radius-lg: 14px;
-$radius-md: 10px;
 $radius-sm: 8px;
-$shadow-card:
-  0 1px 2px rgba(16, 24, 40, 0.04),
-  0 1px 3px rgba(16, 24, 40, 0.06);
-$shadow-hover:
-  0 10px 24px -8px rgba(16, 24, 40, 0.16),
-  0 2px 6px rgba(16, 24, 40, 0.05);
 
 .overview-page {
-  --el-color-primary: #{$brand};
-  --el-color-primary-light-3: #847eed;
-  --el-color-primary-light-5: #a7a3f2;
-  --el-color-primary-light-7: #cac8f7;
-  --el-color-primary-light-8: #dcdafa;
-  --el-color-primary-light-9: #edeefc;
-  --el-color-primary-dark-2: #3f38b7;
+  /* EP 主色不再本地覆盖：亮/暗两套值由 main.css 的 :root / html.dark 统一提供。
+     页面级覆盖会在暗色下把亮色值钉进整个子树（基态/hover/active/勾选框全中招），
+     已在批次 2 用 getComputedStyle 实测确认并修复。 */
   --el-text-color-regular: #{$text};
   --el-border-radius-base: #{$radius-sm};
 
@@ -670,34 +759,21 @@ $shadow-hover:
   flex-shrink: 0;
 }
 
-.page-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  flex-wrap: wrap;
-  max-width: 1200px;
-  margin: 0 auto 24px;
-}
-
-.page-title {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-  color: $text;
-}
-
-.page-subtitle {
-  margin-top: 6px;
-  font-size: 13.5px;
-  color: $text-muted;
-}
+/* 页头结构样式统一走全局 tw-page-head / tw-page-title / tw-page-subtitle，此处不再重复 */
 
 .head-actions {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* 同步状态：复用 tw-status-pill 与 bell-btn 的既有观感，只补齐横向排布 */
+.sync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  /* 贴住左侧标题区，右侧操作区仍然靠右 */
+  margin-right: auto;
 }
 
 .search-input {
@@ -708,15 +784,7 @@ $shadow-hover:
     background: var(--input-bg);
     box-shadow: 0 0 0 1px $line inset;
     padding: 1px 12px;
-    transition: box-shadow 0.2s ease;
-
-    &:hover {
-      box-shadow: 0 0 0 1px var(--app-line) inset;
-    }
-
-    &.is-focus {
-      box-shadow: 0 0 0 2px rgba($brand, 0.35) inset;
-    }
+    @include field-states;
   }
 
   :deep(.el-input__prefix) {
@@ -745,15 +813,17 @@ $shadow-hover:
   }
 
   &:hover {
-    border-color: rgba($brand, 0.35);
+    border-color: tint(brand, 35%);
     background: $brand-soft;
-    color: $brand;
+    color: var(--brand);
     transform: translateY(-1px);
   }
 
   &:active {
     transform: scale(0.94);
   }
+
+  @include focus-ring;
 }
 
 .create-btn {
@@ -762,7 +832,7 @@ $shadow-hover:
   border: none;
   border-radius: $radius-sm;
   font-weight: 600;
-  box-shadow: 0 6px 14px -6px rgba($brand, 0.65);
+  box-shadow: 0 6px 14px -6px tint(brand, 65%);
 
   .icon {
     width: 15px;
@@ -772,7 +842,7 @@ $shadow-hover:
 
   &:hover {
     transform: translateY(-1px);
-    box-shadow: 0 10px 20px -8px rgba($brand, 0.7);
+    box-shadow: 0 10px 20px -8px tint(brand, 70%);
   }
 
   &:active {
@@ -789,14 +859,8 @@ $shadow-hover:
   margin: 0 auto 28px;
 }
 
+/* 玻璃底/边框/圆角/阴影由 main.css 的 body .el-card 统一提供，此处只留交互与本页布局 */
 .stat-card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-
   transition:
     box-shadow 0.22s ease,
     transform 0.22s ease;
@@ -819,7 +883,7 @@ $shadow-hover:
 
   &:hover {
     transform: translateY(-2px);
-    box-shadow: $shadow-hover;
+    box-shadow: var(--shadow-hover);
   }
 
   :deep(.el-card__body) {
@@ -846,17 +910,17 @@ $shadow-hover:
   }
 
   &.is-brand {
-    color: $brand;
+    color: var(--brand);
     background: $brand-soft;
   }
 
   &.is-danger {
-    color: $danger;
+    color: var(--danger);
     background: var(--danger-soft);
   }
 
   &.is-success {
-    color: $success;
+    color: var(--success);
     background: var(--success-soft);
   }
 }
@@ -886,15 +950,15 @@ $shadow-hover:
   }
 
   &.is-brand {
-    color: $brand;
+    color: var(--brand);
   }
 
   &.is-danger {
-    color: $danger;
+    color: var(--danger);
   }
 
   &.is-success {
-    color: $success;
+    color: var(--success);
   }
 }
 
@@ -928,6 +992,7 @@ $shadow-hover:
 
 .toolbar-left {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
@@ -970,29 +1035,10 @@ $shadow-hover:
   border-radius: 50%;
 }
 
+/* 颜色/选中/焦点态统一走全局 .tw-segment（模板已加类），此处只留本组尺寸微调 */
 .view-switch {
   :deep(.el-radio-button__inner) {
-    border-color: $line;
-    background: $surface;
-    color: $text-muted;
-    font-weight: 500;
     padding: 9px 16px;
-    box-shadow: none;
-    transition: all 0.2s ease;
-  }
-
-  :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-    background: $brand-soft;
-    border-color: rgba($brand, 0.45);
-    color: $brand;
-    box-shadow: none;
-  }
-
-  :deep(
-    .el-radio-button__original-radio:focus-visible + .el-radio-button__inner
-  ) {
-    outline: none;
-    box-shadow: inset 0 0 0 1px rgba($brand, 0.55);
   }
 }
 
@@ -1003,16 +1049,10 @@ $shadow-hover:
 }
 
 .memo-card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  @include glass-panel(18px 20px 18px 24px);
 
   position: relative;
   overflow: hidden;
-  padding: 18px 20px 18px 24px;
   cursor: pointer;
   outline: none;
   transition:
@@ -1020,14 +1060,15 @@ $shadow-hover:
     box-shadow 0.22s ease,
     border-color 0.22s ease;
 
-  /* 列表错峰入场；backwards 保证动画结束不占用 transform，悬停位移不受影响 */
+  /* 列表错峰入场（第 9 张起延迟封顶，避免长列表末尾迟到）；
+     backwards 保证动画结束不占用 transform，悬停位移不受影响 */
   animation: rise-in 0.45s var(--ease) backwards;
-  animation-delay: calc(var(--i, 0) * 45ms);
+  @include stagger-delay(45ms, 8);
 
   &:hover {
     transform: translateY(-3px);
-    border-color: rgba($brand, 0.28);
-    box-shadow: $shadow-hover;
+    border-color: tint(brand, 28%);
+    box-shadow: var(--shadow-hover);
   }
 
   &:active {
@@ -1036,22 +1077,22 @@ $shadow-hover:
   }
 
   &:focus-visible {
-    border-color: rgba($brand, 0.5);
+    border-color: tint(brand, 50%);
     box-shadow:
-      0 0 0 3px rgba($brand, 0.16),
-      $shadow-hover;
+      0 0 0 3px tint(brand, 16%),
+      var(--shadow-hover);
   }
 
   &.is-high .priority-bar {
-    background: $danger;
+    background: var(--prio-high);
   }
 
   &.is-medium .priority-bar {
-    background: $warn;
+    background: var(--prio-mid);
   }
 
   &.is-low .priority-bar {
-    background: $success;
+    background: var(--prio-low);
   }
 }
 
@@ -1085,7 +1126,6 @@ $shadow-hover:
 .memo-checkbox {
   margin-top: 2px; /* 微调对齐 */
   line-height: 6px;
-  // line-height:100%;
 }
 
 .memo-title {
@@ -1142,13 +1182,13 @@ $shadow-hover:
 
   &:hover {
     opacity: 1;
-    color: $danger;
-    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+    background: tint(danger, 10%);
   }
 
   &:focus-visible {
     opacity: 1;
-    outline: 2px solid rgba(239, 68, 68, 0.45);
+    outline: 2px solid tint(danger, 45%);
     outline-offset: 1px;
   }
 }
@@ -1190,14 +1230,14 @@ html.dark .memo-card.is-overdue {
   0%,
   100% {
     box-shadow:
-      0 0 0 0 rgba(139, 92, 246, 0),
+      0 0 0 0 transparent,
       var(--glass-shadow);
   }
 
   50% {
     box-shadow:
-      0 0 0 3px rgba(139, 92, 246, 0.38),
-      0 10px 26px -10px rgba(139, 92, 246, 0.55),
+      0 0 0 3px tint(ai, 38%),
+      0 10px 26px -10px tint(ai, 55%),
       var(--glass-shadow);
   }
 }
@@ -1206,7 +1246,7 @@ html.dark .memo-card.is-overdue {
   .memo-card.is-new-memo {
     animation: none;
     box-shadow:
-      0 0 0 2px rgba(139, 92, 246, 0.45),
+      0 0 0 2px tint(ai, 45%),
       var(--glass-shadow);
   }
 }
@@ -1233,28 +1273,13 @@ html.dark .memo-card.is-overdue {
   padding-top: 14px;
 }
 
-.ai-badge {
-  flex-shrink: 0;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, $brand, #7c6cf0);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 18px;
-  letter-spacing: 0.04em;
-}
+/* AI 徽标统一走全局 .tw-ai-badge（AI 身份紫渐变） */
 
 .ai-text {
   font-size: 12.5px;
   line-height: 1.6;
   color: var(--app-text-muted);
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
+  @include line-clamp(2);
 }
 
 .memo-timeline {
@@ -1280,7 +1305,7 @@ html.dark .memo-card.is-overdue {
   padding-left: 34px;
 
   animation: rise-in 0.4s var(--ease) backwards;
-  animation-delay: calc(var(--i, 0) * 40ms);
+  @include stagger-delay(40ms, 8);
 
   & + & {
     margin-top: 12px;
@@ -1300,21 +1325,15 @@ html.dark .memo-card.is-overdue {
 }
 
 .timeline-card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  @include glass-panel(16px 18px);
 
-  padding: 16px 18px;
   transition:
     box-shadow 0.22s ease,
     transform 0.22s ease;
 
   &:hover {
     transform: translateX(2px);
-    box-shadow: $shadow-hover;
+    box-shadow: var(--shadow-hover);
   }
 
   .ai-summary {
@@ -1329,14 +1348,7 @@ html.dark .memo-card.is-overdue {
 }
 
 .memo-empty {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-
-  padding: 32px 0;
+  @include glass-panel(32px 0);
 }
 
 .empty-create {
@@ -1346,14 +1358,15 @@ html.dark .memo-card.is-overdue {
   font-weight: 600;
 }
 
-@media (max-width: 1024px) {
+/* 断点统一为 _mixins 的 tablet(1024) / mobile(768)（原 720/1024 两套并存） */
+@include tablet {
   .stat-grid {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
 }
 
-@media (max-width: 720px) {
-  .page-head {
+@include mobile {
+  .tw-page-head {
     align-items: stretch;
   }
 
@@ -1373,43 +1386,51 @@ html.dark .memo-card.is-overdue {
   .legend {
     display: none;
   }
-}
 
-@media (max-width: 720px) {
   .bell-btn {
     display: none;
+  }
+
+  /* 铃铛在移动端隐藏，但同步状态与手动刷新必须保持可见可操作 */
+  .refresh-btn {
+    display: inline-flex;
+  }
+
+  /* 390px：切换器单独占一行，避免和标题/计数挤在同一行被压到右边缘 */
+  .list-toolbar {
+    row-gap: 10px;
+  }
+
+  .view-switch {
+    width: 100%;
+
+    :deep(.el-radio-button) {
+      flex: 1;
+    }
+
+    :deep(.el-radio-button__inner) {
+      display: block;
+      padding: 8px 10px;
+    }
+  }
+
+  /* 空态收紧上下留白 */
+  .memo-empty {
+    padding: 20px 0;
+  }
+
+  /* 给右下角 AI 悬浮球留出高度 */
+  .list-section {
+    padding-bottom: 44px;
   }
 }
 
 /* ---------------- 待办中 / 已完成 分类切换 ---------------- */
-.toolbar-left {
-  flex-wrap: wrap;
-}
-
 .tab-switch {
+  /* 颜色/选中/焦点态统一走全局 .tw-segment（模板已加类），此处只留小尺寸微调 */
   :deep(.el-radio-button__inner) {
-    border-color: $line;
-    background: $surface;
-    color: $text-muted;
-    font-weight: 500;
     font-size: 12.5px;
     padding: 5px 12px;
-    box-shadow: none;
-    transition: all 0.2s ease;
-  }
-
-  :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-    background: $brand-soft;
-    border-color: rgba($brand, 0.45);
-    color: $brand;
-    box-shadow: none;
-  }
-
-  :deep(
-    .el-radio-button__original-radio:focus-visible + .el-radio-button__inner
-  ) {
-    outline: none;
-    box-shadow: inset 0 0 0 1px rgba($brand, 0.55);
   }
 }
 </style>

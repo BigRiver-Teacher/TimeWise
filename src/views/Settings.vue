@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { storeToRefs } from "pinia";
 import { applyTheme, getPreferredTheme, saveTheme } from "@/utils/theme";
 import type { ThemeMode } from "@/utils/theme";
 import { useUserStore } from "@/stores/user"; // 引入刚刚建好的 Store
@@ -7,15 +8,6 @@ import { useSettingsStore } from "@/stores/settings";
 import type { AiModelMode, SummaryLength } from "@/stores/settings";
 import type { UploadFile } from "element-plus";
 import { ElMessage } from "element-plus";
-
-interface SettingsState {
-  /** 应用内提醒 */
-  inApp: boolean;
-  /** 邮件提醒 */
-  email: boolean;
-  /** 每周总结 */
-  weeklyDigest: boolean;
-}
 
 interface ModelOption {
   value: AiModelMode;
@@ -29,16 +21,34 @@ interface LengthOption {
 }
 
 /**
- * 提醒类开关只在设置页用，先留在本地；
- * AI 解析偏好（模型档位 / 摘要长度）改由 Pinia 管理，Input.vue 解析时会读它。
+ * 提醒开关统一由 Pinia 的 settings store 管理（与提醒中心共用同一份状态），
+ * 变动后自动写入 localStorage；这里不再维护组件局部副本。
  */
-const settings = reactive<SettingsState>({
-  inApp: true,
-  email: false,
-  weeklyDigest: true,
-});
-
 const settingsStore = useSettingsStore();
+const { inApp, email, weeklyDigest } = storeToRefs(settingsStore);
+
+/**
+ * 「已自动保存」只在真正持久化成功后出现，2 秒后自动隐藏。
+ * 写入失败时 store 不会递增 saveTick，因此这里不会有任何提示。
+ */
+const autoSaveVisible = ref(false);
+let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+watch(
+  () => settingsStore.saveTick,
+  () => {
+    autoSaveVisible.value = true;
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(() => {
+      autoSaveVisible.value = false;
+    }, 2000);
+  },
+);
+
+onUnmounted(() => {
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  autoSaveTimer = undefined;
+});
 
 const modelOptions: ModelOption[] = [
   { value: "fast", label: "快速模式", desc: "本地轻量模型，约 3 秒返回结果" },
@@ -110,23 +120,23 @@ onMounted(() => {
 
 <template>
   <div class="settings-page">
-    <header class="page-head">
+    <header class="tw-page-head">
       <div>
-        <h1 class="page-title">系统设置</h1>
-        <p class="page-subtitle">
+        <h1 class="tw-page-title">系统设置</h1>
+        <p class="tw-page-subtitle">
           调整提醒渠道与 AI 解析偏好，修改后立即生效。
         </p>
       </div>
-      <span class="auto-save">
-        <span class="auto-dot"></span>
+      <span v-if="autoSaveVisible" class="auto-save tw-status-pill is-success">
+        <span class="tw-status-dot"></span>
         已自动保存
       </span>
     </header>
 
     <!-- 个人资料（新增） -->
-    <section class="panel">
-      <div class="panel-head">
-        <span class="panel-icon">
+    <section class="tw-panel">
+      <div class="tw-panel-head">
+        <span class="tw-panel-icon">
           <!-- 用户图标 -->
           <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path
@@ -138,9 +148,9 @@ onMounted(() => {
             />
           </svg>
         </span>
-        <div class="panel-title-group">
-          <h2 class="panel-title">个人资料</h2>
-          <p class="panel-sub">修改你的展示头像与昵称</p>
+        <div class="tw-panel-title-group">
+          <h2 class="tw-panel-title">个人资料</h2>
+          <p class="tw-panel-sub">修改你的展示头像与昵称</p>
         </div>
       </div>
 
@@ -187,9 +197,9 @@ onMounted(() => {
     </section>
 
     <!-- 外观设置 -->
-    <section class="panel">
-      <div class="panel-head">
-        <span class="panel-icon">
+    <section class="tw-panel">
+      <div class="tw-panel-head">
+        <span class="tw-panel-icon">
           <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path
               d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"
@@ -199,9 +209,9 @@ onMounted(() => {
             />
           </svg>
         </span>
-        <div class="panel-title-group">
-          <h2 class="panel-title">外观设置</h2>
-          <p class="panel-sub">切换后立即生效，并会记住你的选择</p>
+        <div class="tw-panel-title-group">
+          <h2 class="tw-panel-title">外观设置</h2>
+          <p class="tw-panel-sub">切换后立即生效，并会记住你的选择</p>
         </div>
       </div>
 
@@ -217,9 +227,9 @@ onMounted(() => {
     </section>
 
     <!-- 提醒偏好 -->
-    <section class="panel">
-      <div class="panel-head">
-        <span class="panel-icon">
+    <section class="tw-panel">
+      <div class="tw-panel-head">
+        <span class="tw-panel-icon">
           <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path
               d="M6.5 10a5.5 5.5 0 0 1 11 0c0 3.2.8 4.6 1.5 5.5H5c.7-.9 1.5-2.3 1.5-5.5Z"
@@ -235,9 +245,9 @@ onMounted(() => {
             />
           </svg>
         </span>
-        <div class="panel-title-group">
-          <h2 class="panel-title">提醒偏好</h2>
-          <p class="panel-sub">决定提醒从哪些渠道触达你</p>
+        <div class="tw-panel-title-group">
+          <h2 class="tw-panel-title">提醒偏好</h2>
+          <p class="tw-panel-sub">决定提醒从哪些渠道触达你</p>
         </div>
       </div>
 
@@ -247,31 +257,31 @@ onMounted(() => {
             <h3 class="setting-title">应用内提醒</h3>
             <p class="setting-desc">解析完成后在页面内弹出提示</p>
           </div>
-          <el-switch v-model="settings.inApp" />
+          <el-switch v-model="inApp" />
         </div>
 
         <div class="setting-row">
           <div class="setting-text">
             <h3 class="setting-title">邮件提醒</h3>
-            <p class="setting-desc">按智能提醒时间点发送邮件</p>
+            <p class="setting-desc">按智能提醒时间点发送邮件 · 暂未接入</p>
           </div>
-          <el-switch v-model="settings.email" />
+          <el-switch v-model="email" disabled />
         </div>
 
         <div class="setting-row">
           <div class="setting-text">
             <h3 class="setting-title">每周总结</h3>
-            <p class="setting-desc">每周一上午推送上周完成情况</p>
+            <p class="setting-desc">每周一上午推送上周完成情况 · 暂未接入</p>
           </div>
-          <el-switch v-model="settings.weeklyDigest" />
+          <el-switch v-model="weeklyDigest" disabled />
         </div>
       </div>
     </section>
 
     <!-- AI 解析 -->
-    <section class="panel">
-      <div class="panel-head">
-        <span class="panel-icon is-ai">
+    <section class="tw-panel">
+      <div class="tw-panel-head">
+        <span class="tw-panel-icon is-ai">
           <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path
               d="M12 3.5 13.9 9l5.6 1.9-5.6 1.9L12 18.3 10.1 12.8 4.5 10.9 10.1 9Z"
@@ -286,9 +296,9 @@ onMounted(() => {
             />
           </svg>
         </span>
-        <div class="panel-title-group">
-          <h2 class="panel-title">AI 解析</h2>
-          <p class="panel-sub">影响录入时的解析速度与概括详细程度</p>
+        <div class="tw-panel-title-group">
+          <h2 class="tw-panel-title">AI 解析</h2>
+          <p class="tw-panel-sub">影响录入时的解析速度与概括详细程度</p>
         </div>
       </div>
 
@@ -328,32 +338,18 @@ onMounted(() => {
 </template>
 
 <style scoped lang="scss">
-$brand: #4f46e5;
-$brand-soft: var(--brand-soft);
-$ai: #8b5cf6;
 $text: var(--app-text);
 $text-muted: var(--app-text-muted);
-$text-subtle: var(--app-text-subtle);
-$surface: var(--app-surface);
-$line: var(--app-line);
-$radius-lg: 16px;
-$radius-sm: 8px;
-$shadow-card:
-  0 1px 2px rgba(16, 24, 40, 0.04),
-  0 1px 3px rgba(16, 24, 40, 0.06);
 
 .settings-page {
-  --el-color-primary: #{$brand};
-  --el-color-primary-light-3: #847eed;
-  --el-color-primary-light-8: #dcdafa;
-  --el-color-primary-light-9: #edeefc;
+  /* EP 主色 / 控件底色由 main.css 全局令牌统一提供，页面不再局部覆盖 */
   --el-text-color-regular: #{$text};
-  --el-border-radius-base: #{$radius-sm};
+  --el-border-radius-base: var(--radius-sm);
 
-  max-width: 1080px;
+  max-width: var(--content-max);
   margin: 0 auto;
   color: $text;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .icon {
@@ -362,59 +358,13 @@ $shadow-card:
   flex-shrink: 0;
 }
 
-.page-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 18px;
-}
-
-.page-title {
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-}
-
-.page-subtitle {
-  margin-top: 6px;
-  font-size: 13px;
-  color: $text-muted;
-}
-
+/* 页头结构（标题 / 副标题 / 已自动保存胶囊）统一走全局 tw-* */
 .auto-save {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 12px;
-  border: 1px solid rgba(16, 185, 129, 0.22);
-  border-radius: 999px;
-  background: var(--success-soft);
-  color: var(--success-text);
-  font-size: 12px;
-  font-weight: 500;
+  flex-shrink: 0;
 }
 
-.auto-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
-}
-
-.panel {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-
-  padding: 22px 24px 8px;
-
+/* 面板玻璃底 / 内距统一走全局 .tw-panel（22px 24px 24px），此处只留入场节奏 */
+.tw-panel {
   animation: rise-in 0.45s var(--ease) backwards;
 
   &:nth-of-type(1) {
@@ -438,49 +388,7 @@ $shadow-card:
   }
 }
 
-.panel-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-
-.panel-icon {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  flex-shrink: 0;
-  border-radius: 11px;
-  background: $brand-soft;
-  color: $brand;
-
-  .icon {
-    width: 19px;
-    height: 19px;
-  }
-
-  &.is-ai {
-    background: linear-gradient(135deg, rgba($ai, 0.14), rgba($ai, 0.06));
-    color: $ai;
-  }
-}
-
-.panel-title-group {
-  min-width: 0;
-}
-
-.panel-title {
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1.4;
-}
-
-.panel-sub {
-  margin-top: 2px;
-  font-size: 12.5px;
-  color: $text-subtle;
-}
+/* 面板头结构统一走全局 tw-panel-* */
 
 .setting-list {
   margin-top: 8px;
@@ -495,7 +403,7 @@ $shadow-card:
   padding: 16px 12px;
   border-top: 1px solid var(--app-line-soft);
   border-radius: 10px;
-  transition: background 0.2s ease;
+  transition: background var(--dur) var(--ease);
 
   &:hover {
     background: var(--chip-bg);
@@ -507,61 +415,52 @@ $shadow-card:
 }
 
 .setting-title {
-  font-size: 13.5px;
-  font-weight: 600;
   color: $text;
+  font-size: var(--fs-base);
+  font-weight: 600;
 }
 
+/* 说明性小字：改用 --app-text-muted + --fs-sm，保证 ≥4.5:1 对比度 */
 .setting-desc {
   margin-top: 3px;
-  font-size: 12px;
-  color: $text-subtle;
-}
-
-.setting-select {
-  width: 150px;
-  flex-shrink: 0;
+  color: $text-muted;
+  font-size: var(--fs-sm);
 }
 
 /* 头像上传相关样式 */
 .avatar-uploader {
   cursor: pointer;
-  transition: all 0.3s;
 }
 .avatar-hover {
   border: 2px solid transparent;
-  box-shadow: 0 2px 10px rgba(79, 70, 229, 0.18);
+  box-shadow: 0 2px 10px tint(brand, 18%);
   transition:
-    border-color 0.2s ease,
-    transform 0.25s var(--ease),
-    box-shadow 0.25s ease;
+    border-color var(--dur) var(--ease),
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 .avatar-uploader:hover .avatar-hover {
-  border-color: $brand;
+  border-color: var(--brand);
   transform: scale(1.05);
-  box-shadow: 0 6px 18px -6px rgba(79, 70, 229, 0.45);
+  box-shadow: 0 6px 18px -6px tint(brand, 45%);
 }
 
-@media (max-width: 720px) {
-  .page-title {
-    font-size: 20px;
-  }
-
-  .panel {
-    padding: 18px 16px 6px;
-  }
-
-  .setting-row {
-    align-items: flex-start;
-  }
-}
-/* ------------------------------ 补充：当前模板使用的控件宽度类 ------------------------------ */
+/* 当前模板使用的控件宽度类 */
 .setting-control {
   width: 160px;
   flex-shrink: 0;
 }
 
-@media (max-width: 720px) {
+/* 断点统一走 _mixins 的 mobile(768px)（原两处 720px 合并） */
+@include mobile {
+  .tw-panel {
+    padding: 18px 16px;
+  }
+
+  .setting-row {
+    align-items: flex-start;
+  }
+
   .setting-control {
     width: 100%;
   }

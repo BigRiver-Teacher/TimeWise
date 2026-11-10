@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useMemoStore } from "@/stores/memo";
+import { useUserStore } from "@/stores/user";
+import { parseMemoTime } from "@/utils/memoTime";
 
 /** 聊天消息：role 决定气泡在左（AI）还是右（用户） */
 interface ChatMessage {
@@ -15,14 +17,36 @@ const FALLBACK_REPLY =
 
 /** 待办数据来自 Pinia，首页保存的条目这里能直接读到 */
 const memoStore = useMemoStore();
+/** 用户资料同样来自 Pinia：设置页改完昵称，这里实时同步 */
+const userStore = useUserStore();
 
 const isOpen = ref<boolean>(false);
 const inputText = ref<string>("");
 const isThinking = ref<boolean>(false);
 
+/** 昵称读取失败（存储不可用等）时回落到默认昵称，不允许白屏 */
+const userName = computed<string>(() => {
+  try {
+    return userStore.userName?.trim() || "何同学";
+  } catch {
+    return "何同学";
+  }
+});
+
+/** 开场白：跟随昵称变化，不再写死 */
+const greeting = computed<string>(
+  () => `你好，${userName.value}！我是你的智能备忘录助手。`,
+);
+
 const messages = ref<ChatMessage[]>([
-  { id: 1, role: "ai", text: "你好，何同学！我是你的智能备忘录助手。" },
+  { id: 1, role: "ai", text: greeting.value },
 ]);
+
+/** 已挂载（悬浮球常驻）时改昵称，开场白也要立即更新，后续聊天记录保持不动 */
+watch(greeting, (text) => {
+  const first = messages.value[0];
+  if (first && first.role === "ai") first.text = text;
+});
 
 const listRef = ref<HTMLDivElement>();
 let nextId = 2;
@@ -43,35 +67,16 @@ function buildTodoReply(): string {
   const overdueTasks: string[] = [];
   const pendingTasks: string[] = [];
 
-  uncompleted.forEach((memo, index) => {
+  uncompleted.forEach((memo) => {
     const timeStr = memo.time || "";
     const title = memo.title;
     let isOverdue = false;
 
-    // 【核心逻辑】尝试从字符串中提取日期
-    // 匹配格式1：2026-10-31 或 2026/10/31
-    const standardMatch = timeStr.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
-    // 匹配格式2：10月31日
-    const chineseMatch = timeStr.match(/(\d{1,2})月(\d{1,2})日/);
+    // 全站统一解析：与总览 / 提醒中心 / 详情 / 全局通知共用同一个解析器，
+    // 跨年、相对日期、中文数字时刻的结论天然一致
+    const taskDate = parseMemoTime(timeStr);
 
-    let taskDate: Date | null = null;
-
-    if (standardMatch) {
-      taskDate = new Date(
-        parseInt(standardMatch[1]!),
-        parseInt(standardMatch[2]!) - 1,
-        parseInt(standardMatch[3]!),
-      );
-    } else if (chineseMatch) {
-      // 如果只有月日，默认用今年的年份
-      taskDate = new Date(
-        now.getFullYear(),
-        parseInt(chineseMatch[1]!) - 1,
-        parseInt(chineseMatch[2]!),
-      );
-    }
-
-    // 如果成功解析出了日期，且日期早于今天，就算过期
+    // 解析成功且日期早于今天 00:00 才算过期；解析不出来直接跳过，不按 0 点兜底
     if (taskDate && taskDate < todayStart) {
       isOverdue = true;
     }
@@ -79,21 +84,24 @@ function buildTodoReply(): string {
     if (isOverdue) {
       overdueTasks.push(`${title}（${timeStr}）`);
     } else {
-      pendingTasks.push(`${index + 1}. ${title}（${timeStr}）`);
+      pendingTasks.push(`${title}（${timeStr}）`);
     }
   });
 
   // 3. 组装最终回复
   let reply = "";
 
+  // 编号跨分组连续递增：逾期在前、待办在后，序号与当前有效待办一一对应
+  let seq = 0;
+
   if (overdueTasks.length > 0) {
     reply += `⚠️ 注意，你有 ${overdueTasks.length} 项任务已经过期：\n`;
-    reply += overdueTasks.map((t, i) => `${i + 1}. ${t}`).join("\n") + "\n\n";
+    reply += overdueTasks.map((t) => `${++seq}. ${t}`).join("\n") + "\n\n";
   }
 
   if (pendingTasks.length > 0) {
     reply += `📌 你今天还有 ${pendingTasks.length} 项未完成：\n`;
-    reply += pendingTasks.join("\n");
+    reply += pendingTasks.map((t) => `${++seq}. ${t}`).join("\n");
   }
 
   if (uncompleted.length === 0) {
@@ -289,10 +297,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
-$brand: #4f46e5;
-$brand-deep: #4338ca;
-$ai: #8b5cf6;
-
 /* ---------------- 悬浮球 ---------------- */
 .fab {
   position: fixed;
@@ -306,15 +310,15 @@ $ai: #8b5cf6;
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: linear-gradient(135deg, #7c6cf0, $brand 55%, $ai);
+  background: var(--ai-gradient);
   color: #fff;
   cursor: pointer;
   box-shadow:
-    0 12px 26px -12px rgba($brand, 0.9),
+    0 12px 26px -12px tint(brand, 90%),
     0 2px 6px rgba(16, 24, 40, 0.14);
   transition:
-    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 0.25s ease;
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 
   /* 呼吸光环：提示 AI 助手常驻可用，展开时隐藏避免干扰 */
   &::after {
@@ -322,7 +326,7 @@ $ai: #8b5cf6;
     position: absolute;
     inset: -3px;
     border-radius: 50%;
-    border: 2px solid rgba($brand, 0.5);
+    border: 2px solid tint(brand, 50%);
     opacity: 0;
     pointer-events: none;
     animation: fab-ring 3s ease-out infinite;
@@ -340,7 +344,7 @@ $ai: #8b5cf6;
   &:hover {
     transform: scale(1.08);
     box-shadow:
-      0 16px 30px -12px rgba($brand, 0.95),
+      0 16px 30px -12px tint(brand, 95%),
       0 4px 10px rgba(16, 24, 40, 0.16);
   }
 
@@ -348,10 +352,7 @@ $ai: #8b5cf6;
     transform: scale(0.97);
   }
 
-  &:focus-visible {
-    outline: 3px solid rgba($brand, 0.45);
-    outline-offset: 3px;
-  }
+  @include focus-ring;
 }
 
 @keyframes fab-ring {
@@ -379,11 +380,11 @@ $ai: #8b5cf6;
   height: 520px;
   max-height: calc(100vh - 160px);
   border: 1px solid var(--glass-border);
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   background: var(--glass-bg);
   box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
   overflow: hidden;
   transform-origin: bottom right;
   color: var(--app-text, #1f2937);
@@ -419,7 +420,7 @@ $ai: #8b5cf6;
   place-items: center;
   flex-shrink: 0;
   border-radius: 50%;
-  background: linear-gradient(135deg, $ai, $brand);
+  background: var(--ai-gradient);
   color: #fff;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -428,7 +429,7 @@ $ai: #8b5cf6;
 .chat-avatar {
   width: 34px;
   height: 34px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 .chat-title-group {
@@ -437,15 +438,15 @@ $ai: #8b5cf6;
 }
 
 .chat-title {
-  font-size: 13.5px;
+  font-size: var(--fs-base);
   font-weight: 700;
   line-height: 1.4;
 }
 
 .chat-sub {
   margin-top: 1px;
-  font-size: 11.5px;
-  color: var(--app-text-subtle, #79818f);
+  color: var(--app-text-muted, #79818f);
+  font-size: var(--fs-xs);
 }
 
 .chat-close {
@@ -455,14 +456,14 @@ $ai: #8b5cf6;
   height: 28px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--app-text-subtle, #79818f);
   cursor: pointer;
   transition:
-    background 0.2s ease,
-    color 0.2s ease,
-    border-color 0.2s ease;
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 
   svg {
     width: 16px;
@@ -474,6 +475,8 @@ $ai: #8b5cf6;
     background: var(--chip-bg, #f9fafb);
     color: var(--app-text, #1f2937);
   }
+
+  @include focus-ring;
 }
 
 /* ---------------- 消息列表 ---------------- */
@@ -511,8 +514,8 @@ $ai: #8b5cf6;
 .bubble {
   max-width: 78%;
   padding: 9px 12px;
-  border-radius: 14px;
-  font-size: 13px;
+  border-radius: var(--radius-lg);
+  font-size: var(--fs-sm);
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -527,9 +530,9 @@ $ai: #8b5cf6;
 
 .is-user .bubble {
   border-bottom-right-radius: 4px;
-  background: linear-gradient(135deg, #6d63f0, $brand-deep);
+  background: linear-gradient(135deg, var(--brand), var(--brand-hover));
   color: #fff;
-  box-shadow: 0 8px 16px -12px rgba($brand, 0.95);
+  box-shadow: 0 8px 16px -12px tint(brand, 95%);
 }
 
 /* 思考中的三个点 */
@@ -579,9 +582,9 @@ $ai: #8b5cf6;
 
 .quick-ask-label {
   margin-bottom: 6px;
-  font-size: 11px;
+  color: var(--app-text-muted, #79818f);
+  font-size: var(--fs-xs);
   line-height: 1.4;
-  color: var(--app-text-subtle, #79818f);
 }
 
 .quick-ask-chips {
@@ -596,7 +599,7 @@ $ai: #8b5cf6;
   border-radius: var(--radius-pill, 999px);
   background: var(--brand-soft, #eef2ff);
   color: var(--brand, #4f46e5);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   line-height: 1.4;
   cursor: pointer;
@@ -604,18 +607,15 @@ $ai: #8b5cf6;
 
   &:hover {
     transform: scale(1.04);
-    border-color: rgba($brand, 0.3);
-    background: rgba($brand, 0.15);
+    border-color: tint(brand, 30%);
+    background: tint(brand, 15%);
   }
 
   &:active {
     transform: scale(0.98);
   }
 
-  &:focus-visible {
-    outline: 2px solid rgba($brand, 0.45);
-    outline-offset: 2px;
-  }
+  @include focus-ring;
 }
 
 /* ---------------- 输入区 ---------------- */
@@ -633,22 +633,26 @@ $ai: #8b5cf6;
   height: 38px;
   padding: 0 12px;
   border: 1px solid var(--app-line, rgba(0, 0, 0, 0.1));
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--input-bg, rgba(255, 255, 255, 0.55));
   color: var(--app-text, #1f2937);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 
   &::placeholder {
     color: var(--app-text-subtle, #79818f);
   }
 
+  &:hover {
+    border-color: tint(brand, 40%);
+  }
+
   &:focus {
     outline: none;
-    border-color: rgba($brand, 0.5);
-    box-shadow: 0 0 0 3px rgba($brand, 0.14);
+    border-color: tint(brand, 50%);
+    box-shadow: 0 0 0 3px tint(brand, 14%);
   }
 }
 
@@ -656,38 +660,42 @@ $ai: #8b5cf6;
   height: 38px;
   padding: 0 16px;
   border: none;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #6d63f0, $brand);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--brand), var(--brand-hover));
   color: #fff;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   transition:
-    opacity 0.2s ease,
-    transform 0.2s ease,
-    box-shadow 0.2s ease;
+    opacity var(--dur) var(--ease),
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 
   &:not(:disabled):hover {
     transform: translateY(-1px);
-    box-shadow: 0 8px 18px -10px rgba($brand, 0.9);
+    box-shadow: 0 8px 18px -10px tint(brand, 90%);
   }
 
+  &:active:not(:disabled) {
+    transform: translateY(0) scale(0.98);
+  }
+
+  /* 禁用态不抬起、不发光 */
   &:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
   }
 
-  &:focus-visible {
-    outline: 2px solid rgba($brand, 0.45);
-    outline-offset: 2px;
-  }
+  @include focus-ring;
 }
 
-/* ---------------- 移动端：避开底部导航栏 ---------------- */
-@media (max-width: 768px) {
+/* ---------------- 移动端：避开底部导航栏（断点统一走 mobile(768px)） ---------------- */
+@include mobile {
   .fab {
     right: 16px;
-    bottom: 76px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
     width: 52px;
     height: 52px;
 
@@ -699,7 +707,7 @@ $ai: #8b5cf6;
 
   .chat-panel {
     right: 12px;
-    bottom: 138px;
+    bottom: calc(138px + env(safe-area-inset-bottom));
     left: 12px;
     width: auto;
     height: 460px;

@@ -9,6 +9,8 @@ import type { GridComponentOption, TooltipComponentOption } from 'echarts/compon
 import type { ComposeOption } from 'echarts/core'
 import { useMemoStore } from '@/stores/memo'
 import type { MemoItem } from '@/stores/memo'
+import { useSettingsStore } from '@/stores/settings'
+import { advanceSummaryFor } from '@/constants/reminder'
 import { formatMonthDay, parseMemoTime, toDateKey } from '@/utils/memoTime'
 
 // 按需注册：只打包柱状图 + 坐标系 + 提示框，避免引入整包
@@ -25,7 +27,7 @@ interface ReminderItem {
   timeLabel: string
   type: string
   priority: Priority
-  /** 底部提醒文案，按优先级给出：提前 3 小时 / 6 小时 / 1 天提醒 */
+  /** 底部提醒文案：按优先级取自公共提前量规则 */
   advanceLabel: string
 }
 
@@ -53,15 +55,10 @@ const priorityMeta: Record<Priority, { label: string; color: string; cssVar: str
   low: { label: '普通', color: 'var(--prio-low)', cssVar: '--prio-low' },
 }
 
-/** 底部提醒文案：按优先级给出提前量 */
-const advanceLabels: Record<Priority, string> = {
-  high: '提前 3 小时提醒',
-  medium: '提前 6 小时提醒',
-  low: '提前 1 天提醒',
-}
-
 /* ------------------------------ 图表数据（Pinia 真实数据） ------------------------------ */
 const memoStore = useMemoStore()
+/** 提醒渠道开关：与设置页共用同一个 store */
+const settingsStore = useSettingsStore()
 
 /* ------------------------------ 时间轴数据（Pinia 真实数据） ------------------------------ */
 /** 未完成的待办：时间轴只列还没做完的事 */
@@ -93,22 +90,53 @@ const reminderGroups = computed<ReminderGroup[]>(() =>
         timeLabel: memo.time || '未设置时间',
         type: memo.type || '未分类',
         priority,
-        advanceLabel: advanceLabels[priority],
+        advanceLabel: advanceSummaryFor(priority),
       })),
   })),
 )
 
-/** 最近一条待办：未完成里时间最早且能解析出来的那条 */
+/**
+ * 时间依赖：每 60 秒自增一次（与 App.vue 轮询节奏一致）。
+ * 副标题与未来 7 天分布都读它，跨过到期时刻或午夜后会自动重算。
+ */
+const nowTick = ref(Date.now())
+let tickTimer: ReturnType<typeof setInterval> | undefined
+
+onMounted(() => {
+  tickTimer = setInterval(() => {
+    nowTick.value = Date.now()
+  }, 60_000)
+})
+
+onUnmounted(() => {
+  if (tickTimer) clearInterval(tickTimer)
+  tickTimer = undefined
+})
+
+/** 最近一条待办：未完成里时间最早、且尚未过期的条目 */
 const nextReminder = computed<{ date: Date; memo: MemoItem } | null>(() => {
   let best: { date: Date; memo: MemoItem } | null = null
 
   for (const memo of activeMemos.value) {
     const date = parseMemoTime(memo.time)
     if (!date) continue
+    // 已经过期的时刻不再作为「最近一条提醒」，避免出现「将在昨天触发」
+    if (date.getTime() <= nowTick.value) continue
     if (!best || date.getTime() < best.date.getTime()) best = { date, memo }
   }
 
   return best
+})
+
+/** 渠道文案的唯一数据源：与设置页共用 settings store，不在本组件维护副本 */
+const channelLabel = computed<string>(() => {
+  const inApp = settingsStore.inApp
+  const email = settingsStore.email
+
+  if (inApp && email) return '邮件 + 应用内'
+  if (inApp) return '应用内'
+  if (email) return '邮件'
+  return '提醒已关闭'
 })
 
 /** 相对今天的友好时间：今天 18:00 / 明天 09:30 / 11-15 18:00 */
@@ -141,11 +169,12 @@ const headSubtitle = computed<string>(() => {
  * 未来 7 天（含今天）的待办分布：
  * - 只统计未完成的任务；
  * - 时间解析不出具体日期的（如「本周内」）跳过；
+ * - 已经过了具体时刻的条目排除，避免把逾期任务算进未来分布；
  * - 按 priority 统计每天三个维度的数量，供堆叠柱状图使用。
  */
 const weekData = computed<DailyPoint[]>(() => {
   const days: DailyPoint[] = []
-  const today = new Date()
+  const today = new Date(nowTick.value)
 
   for (let offset = 0; offset < 7; offset += 1) {
     const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)
@@ -163,6 +192,9 @@ const weekData = computed<DailyPoint[]>(() => {
 
     const due = parseMemoTime(memo.time)
     if (!due) continue
+
+    // 按时刻过滤：早于当前时刻的条目已过期，不再进入未来分布
+    if (due.getTime() < nowTick.value) continue
 
     const bucket = days.find((day) => day.key === toDateKey(due))
     if (!bucket) continue
@@ -290,35 +322,43 @@ onUnmounted(() => {
 <template>
   <div class="reminder-page">
     <!-- 顶部 -->
-    <header class="page-head">
+    <header class="tw-page-head">
       <div class="head-text">
-        <h1 class="page-title">提醒中心</h1>
-        <p class="page-subtitle">{{ headSubtitle }}</p>
+        <h1 class="tw-page-title">提醒中心</h1>
+        <p class="tw-page-subtitle">{{ headSubtitle }}</p>
       </div>
 
-      <div class="head-note">
-        <span class="note-dot"></span>
-        应用内提醒已开启
+      <div
+        class="head-note tw-status-pill"
+        :class="channelLabel === '提醒已关闭' ? 'is-warn' : 'is-success'"
+      >
+        <span class="tw-status-dot"></span>
+        {{ channelLabel }}
       </div>
     </header>
 
     <!-- 未来 7 天分布 -->
-    <section class="panel">
-      <div class="panel-head">
-        <span class="panel-icon">
+    <section class="tw-panel">
+      <div class="tw-panel-head">
+        <span class="tw-panel-icon">
           <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <rect x="4" y="5" width="16" height="16" rx="4" stroke="currentColor" stroke-width="1.7" />
             <path d="M8 3v4M16 3v4M4 10h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
             <path d="M8 15v3M12 12.5v5.5M16 14v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
           </svg>
         </span>
-        <div class="panel-title-group">
-          <h2 class="panel-title">未来 7 天提醒分布</h2>
-          <p class="panel-sub">按紧急程度堆叠，共 {{ weekTotal }} 个提醒时间点</p>
+        <div class="tw-panel-title-group">
+          <h2 class="tw-panel-title">未来 7 天提醒分布</h2>
+          <p class="tw-panel-sub">按紧急程度堆叠，共 {{ weekTotal }} 个提醒时间点</p>
         </div>
 
         <ul class="chart-legend">
-          <li v-for="item in priorityTotals" :key="item.priority" class="legend-item">
+          <li
+            v-for="item in priorityTotals"
+            :key="item.priority"
+            class="legend-item"
+            :class="{ 'is-zero': item.count === 0 }"
+          >
             <i class="legend-dot" :style="{ backgroundColor: item.color }"></i>
             {{ item.label }}
             <b>{{ item.count }}</b>
@@ -326,7 +366,7 @@ onUnmounted(() => {
         </ul>
       </div>
 
-      <div class="chart-wrap">
+      <div class="chart-wrap" :class="{ 'is-empty': weekTotal === 0 }">
         <div ref="chartEl" class="week-chart" role="img" aria-label="未来 7 天提醒分布柱状图"></div>
         <el-empty
           v-if="weekTotal === 0"
@@ -338,17 +378,17 @@ onUnmounted(() => {
     </section>
 
     <!-- 按紧急程度分组的时间轴 -->
-    <section class="panel timeline-panel">
-      <div class="panel-head">
-        <span class="panel-icon is-ai">
+    <section class="tw-panel timeline-panel">
+      <div class="tw-panel-head">
+        <span class="tw-panel-icon is-ai">
           <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M6.5 10a5.5 5.5 0 0 1 11 0c0 3.2.8 4.6 1.5 5.5H5c.7-.9 1.5-2.3 1.5-5.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
             <path d="M10 18.5a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
           </svg>
         </span>
-        <div class="panel-title-group">
-          <h2 class="panel-title">提醒时间轴</h2>
-          <p class="panel-sub">按紧急程度分组，越靠前越需要优先处理</p>
+        <div class="tw-panel-title-group">
+          <h2 class="tw-panel-title">提醒时间轴</h2>
+          <p class="tw-panel-sub">按紧急程度分组，越靠前越需要优先处理</p>
         </div>
       </div>
 
@@ -383,7 +423,7 @@ onUnmounted(() => {
                     {{ item.timeLabel }}
                   </p>
 
-                  <p class="card-meta">{{ item.advanceLabel }} · 邮件 + 应用内</p>
+                  <p class="card-meta">{{ item.advanceLabel }} · {{ channelLabel }}</p>
                 </article>
               </el-timeline-item>
             </el-timeline>
@@ -402,32 +442,18 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
-$brand: #4f46e5;
-$brand-soft: var(--brand-soft);
-$ai: #8b5cf6;
 $text: var(--app-text);
 $text-muted: var(--app-text-muted);
 $text-subtle: var(--app-text-subtle);
-$bg: var(--app-bg);
-$surface: var(--app-surface);
-$line: var(--app-line);
-$radius-lg: 16px;
-$radius-md: 12px;
-$radius-sm: 8px;
-$shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
 
 .reminder-page {
-  --el-color-primary: #{$brand};
-  --el-color-primary-light-3: #847eed;
-  --el-color-primary-light-5: #a7a3f2;
-  --el-color-primary-light-7: #cac8f7;
-  --el-color-primary-light-8: #dcdafa;
-  --el-color-primary-light-9: #edeefc;
-  --el-color-primary-dark-2: #3f38b7;
+  /* EP 主色 / 控件底色由 main.css 全局令牌统一提供，页面不再局部覆盖 */
   --el-text-color-regular: #{$text};
 
+  max-width: var(--content-max);
+  margin: 0 auto;
   color: $text;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .icon {
@@ -436,64 +462,10 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   flex-shrink: 0;
 }
 
-/* ---------------- 顶部 ---------------- */
-.page-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 20px;
-  flex-wrap: wrap;
-  max-width: 1080px;
-  margin: 0 auto 20px;
-}
-
-.page-title {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-}
-
-.page-subtitle {
-  margin-top: 6px;
-  font-size: 13.5px;
-  color: $text-muted;
-}
-
-.head-note {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  border-radius: 999px;
-  background: var(--success-soft);
-  color: var(--success-text);
-  font-size: 12.5px;
-  font-weight: 500;
-}
-
-.note-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
-}
+/* 页头结构（标题 / 副标题 / 状态胶囊）统一走全局 tw-page-* 与 tw-status-pill */
 
 /* ---------------- 卡片 ---------------- */
-.panel {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 22px 24px;
-
+.tw-panel {
   animation: rise-in 0.5s var(--ease) backwards;
 
   & + & {
@@ -502,47 +474,10 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   }
 }
 
-.panel-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
+/* 面板头结构统一走全局 tw-panel-* */
 
-.panel-icon {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
+.head-note {
   flex-shrink: 0;
-  border-radius: 11px;
-  background: $brand-soft;
-  color: $brand;
-
-  .icon {
-    width: 19px;
-    height: 19px;
-  }
-
-  &.is-ai {
-    background: linear-gradient(135deg, rgba($ai, 0.14), rgba($ai, 0.06));
-    color: $ai;
-  }
-}
-
-.panel-title-group {
-  min-width: 0;
-}
-
-.panel-title {
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1.4;
-}
-
-.panel-sub {
-  margin-top: 2px;
-  font-size: 12.5px;
-  color: $text-subtle;
 }
 
 /* ---------------- 图例 ---------------- */
@@ -559,8 +494,13 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
   color: $text-muted;
+  font-size: var(--fs-sm);
+
+  /* 计数为 0 的项弱化，图例仍保留 */
+  &.is-zero {
+    opacity: 0.55;
+  }
 
   b {
     color: $text;
@@ -582,11 +522,13 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   margin-top: 14px;
 }
 
-/* ---------------- 时间轴 ---------------- */
-.timeline-panel {
-  padding-bottom: 8px;
+/* 空数据：柱状图没有任何数值，用 CSS 隐掉 canvas（含坐标轴与网格），
+   只保留图例与 el-empty 提示，减少空态噪音 */
+.chart-wrap.is-empty .week-chart {
+  visibility: hidden;
 }
 
+/* ---------------- 时间轴 ---------------- */
 .groups {
   margin-top: 18px;
 }
@@ -611,17 +553,17 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
 }
 
 .group-title {
-  font-size: 13.5px;
-  font-weight: 700;
   color: var(--app-text);
+  font-size: var(--fs-base);
+  font-weight: 700;
 }
 
 .group-count {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--chip-bg);
   color: $text-muted;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -637,7 +579,7 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   }
 
   :deep(.el-timeline-item__node) {
-    box-shadow: 0 0 0 4px $surface;
+    box-shadow: 0 0 0 4px var(--app-surface);
   }
 
   :deep(.el-timeline-item__wrapper) {
@@ -646,23 +588,25 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
 }
 
 .reminder-card {
-  background: var(--glass-bg);
+  padding: 14px 16px;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-card);
+  background: var(--glass-bg);
   box-shadow: var(--glass-shadow);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
-
-  padding: 14px 16px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  transition:
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 
   animation: rise-in 0.4s var(--ease) backwards;
-  animation-delay: calc(var(--i, 0) * 50ms);
+  @include stagger-delay(50ms, 8);
 
   &:hover {
     transform: translateX(2px);
-    border-color: rgba($brand, 0.25);
-    box-shadow: 0 8px 20px -12px rgba(16, 24, 40, 0.22);
+    border-color: tint(brand, 25%);
+    box-shadow: var(--shadow-hover);
   }
 }
 
@@ -674,19 +618,19 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
 }
 
 .card-title {
-  font-size: 14px;
+  color: $text;
+  font-size: var(--fs-base);
   font-weight: 600;
   line-height: 1.5;
-  color: $text;
 }
 
 .card-type {
   flex-shrink: 0;
-  border-color: $line;
+  border-color: var(--app-line);
   background: var(--chip-bg);
   color: var(--app-text-muted);
+  font-size: var(--fs-xs);
   font-weight: 500;
-  font-size: 11.5px;
 }
 
 .card-time {
@@ -694,8 +638,8 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   align-items: center;
   gap: 5px;
   margin-top: 6px;
-  font-size: 12.5px;
   color: $text-muted;
+  font-size: var(--fs-sm);
 
   .icon {
     width: 13px;
@@ -706,17 +650,17 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
 
 .card-meta {
   margin-top: 4px;
-  font-size: 12px;
   color: $text-subtle;
+  font-size: var(--fs-xs);
 }
 
-/* ---------------- 响应式 ---------------- */
-@media (max-width: 720px) {
-  .panel {
+/* ---------------- 响应式（断点统一走 _mixins 的 mobile(768px)） ---------------- */
+@include mobile {
+  .tw-panel {
     padding: 18px;
   }
 
-  .panel-head {
+  .tw-panel-head {
     flex-wrap: wrap;
   }
 
@@ -733,6 +677,11 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   .head-note {
     display: none;
   }
+
+  /* 给右下角 AI 悬浮球留出高度，避免盖住最后一张提醒卡片 */
+  .groups {
+    padding-bottom: 44px;
+  }
 }
 /* ------------------------------ 补充：当前模板新增的图表容器类 ------------------------------ */
 .chart-wrap {
@@ -746,8 +695,8 @@ $shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06)
   pointer-events: none;
 
   :deep(.el-empty__description p) {
-    color: var(--app-text-subtle);
-    font-size: 12.5px;
+    color: var(--app-text-muted);
+    font-size: var(--fs-sm);
   }
 }
 </style>

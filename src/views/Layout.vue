@@ -143,6 +143,7 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
         :to="item.path"
         class="nav-item"
         :class="{ 'is-active': isActive(item.path) }"
+        :aria-current="isActive(item.path) ? 'page' : undefined"
       >
         <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
         <span class="nav-label">{{ item.label }}</span>
@@ -152,7 +153,7 @@ const userInitial = computed(() => userStore.userName.slice(0, 1));
 </template>
 
 <style scoped lang="scss">
-$brand: #4f46e5;
+// 品牌色一律走全局令牌：亮色 --brand #4f46e5 / 暗色 #6366f1（批次1令牌化）
 $brand-soft: var(--brand-soft);
 $text: var(--app-text);
 $text-muted: var(--app-text-muted);
@@ -205,7 +206,7 @@ $line: var(--app-line);
   border-radius: 8px;
   object-fit: contain;
   /* 微微的悬浮感：与玻璃侧边栏呼应 */
-  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.28);
+  box-shadow: 0 2px 8px tint(brand, 28%);
   transition: transform 0.25s var(--ease);
 }
 
@@ -264,7 +265,7 @@ $line: var(--app-line);
 
     &.is-active {
       background: $brand-soft;
-      color: $brand;
+      color: var(--brand);
       font-weight: 600;
 
       &::before {
@@ -276,7 +277,7 @@ $line: var(--app-line);
         height: 20px;
         transform: translateY(-50%) scaleY(0.4);
         border-radius: 0 3px 3px 0;
-        background: $brand;
+        background: var(--brand);
         opacity: 0;
         transition:
           transform 0.24s var(--ease),
@@ -289,7 +290,7 @@ $line: var(--app-line);
       }
 
       .el-icon {
-        color: $brand;
+        color: var(--brand);
       }
     }
   }
@@ -308,7 +309,7 @@ $line: var(--app-line);
   margin: 12px;
   padding: 10px 12px;
   flex-shrink: 0;
-  border: 1px solid rgba(16, 185, 129, 0.28);
+  border: 1px solid tint(success, 28%);
   border-radius: 12px;
   background: var(--success-soft);
   backdrop-filter: blur(8px);
@@ -322,19 +323,19 @@ $line: var(--app-line);
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+  background: var(--success);
+  box-shadow: 0 0 0 3px tint(success, 16%);
   animation: ai-dot-breathe 2.4s ease-in-out infinite;
 }
 
 @keyframes ai-dot-breathe {
   0%,
   100% {
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+    box-shadow: 0 0 0 3px tint(success, 16%);
   }
 
   50% {
-    box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.07);
+    box-shadow: 0 0 0 5px tint(success, 7%);
   }
 }
 
@@ -394,25 +395,15 @@ $line: var(--app-line);
   flex-shrink: 0;
 }
 
-// .user-avatar {
-//   display: grid;
-//   place-items: center;
-//   width: 30px;
-//   height: 30px;
-//   border-radius: 50%;
-//   background: $brand-soft;
-//   color: $brand;
-//   font-size: 12.5px;
-//   font-weight: 700;
-// }
 .user-avatar-img {
   flex-shrink: 0;
   background: $brand-soft;
-  color: $brand;
+  color: var(--brand);
   font-size: 12.5px;
   font-weight: 700;
-  box-shadow: 0 0 0 2px var(--glass-bg-strong),
-    0 2px 8px rgba(79, 70, 229, 0.22);
+  box-shadow:
+    0 0 0 2px var(--glass-bg-strong),
+    0 2px 8px tint(brand, 22%);
   transition: transform 0.25s var(--ease);
 
   &:hover {
@@ -436,8 +427,8 @@ $line: var(--app-line);
   display: none;
 }
 
-/* ---------------- 响应式：768px 切换 ---------------- */
-@media (max-width: 768px) {
+/* ---------------- 响应式：768px 切换（统一走 _mixins 的 mobile 断点） ---------------- */
+@include mobile {
   .sidebar {
     display: none;
   }
@@ -452,7 +443,8 @@ $line: var(--app-line);
   }
 
   .content {
-    padding: 16px 16px 84px;
+    /* 84px 让最后一条内容不被底栏遮挡，safe-area 让刘海屏/手势条同样留白 */
+    padding: 16px 16px calc(84px + env(safe-area-inset-bottom));
   }
 
   .bottom-nav {
@@ -505,12 +497,12 @@ $line: var(--app-line);
     }
 
     &:focus-visible {
-      outline: 2px solid rgba($brand, 0.45);
+      outline: 2px solid tint(brand, 45%);
       outline-offset: -2px;
     }
 
     &.is-active {
-      color: $brand;
+      color: var(--brand);
       font-weight: 600;
 
       &::before {

@@ -13,7 +13,8 @@ import { ElMessage } from "element-plus";
 import type { FormInstance, FormRules } from "element-plus";
 import { useMemoStore } from "@/stores/memo";
 import type { MemoItem } from "@/stores/memo";
-import { toStandardTime } from "@/utils/memoTime";
+import { isAbsoluteTime, isStandardTime, toStandardTime } from "@/utils/memoTime";
+import { REMINDER_ADVANCE_RULES, formatAdvanceLabel } from "@/constants/reminder";
 
 /* ------------------------------ 严格类型定义 ------------------------------ */
 type Priority = "high" | "medium" | "low";
@@ -41,10 +42,31 @@ interface ReminderPreset {
   label: string;
 }
 
+/** 后端 reminderConfig（TEXT / JSON 字符串）反序列化后的结构 */
+interface ReminderConfig {
+  /** 预计通知时间，空串表示按系统推荐 */
+  notifyAt: string;
+  /** 是否手动覆盖系统推荐 */
+  override: boolean;
+  /** 手动提醒时间点（单位小时，降序），最多 REMINDER_MAX_COUNT 条 */
+  manualReminders: number[];
+}
+
+/** 手动提醒条目上限：沿用项目现有「最多 6 条」的约定 */
+const REMINDER_MAX_COUNT = 6;
+
+/** 默认配置：字段缺失 / 解析失败时的兜底 */
+function createDefaultReminderConfig(): ReminderConfig {
+  return { notifyAt: "", override: false, manualReminders: [] };
+}
+
 /* ------------------------------ 基础信息 ------------------------------ */
 const route = useRoute();
 const router = useRouter();
 const memoStore = useMemoStore();
+
+/** 后端接口地址（与 store 保持一致） */
+const API_BASE = "http://localhost:3000/api";
 
 const form = reactive<DetailForm>({
   title: "",
@@ -98,30 +120,164 @@ const memoPriorityLabel = computed<string>(() => {
   );
 });
 
+/**
+ * 展示区只读时间文案：
+ * - 已是绝对时间 → 原样展示，打开多少次、放多少天都不变
+ * - 历史残留的相对词 → 按该条记录自身的 createdAt 一次性换算（不写回、不随打开时间漂移）
+ * - 没有 createdAt 参照 → 留空，绝不按当前时刻重新解释
+ */
+const displayTime = computed<string>(() => {
+  const item = memo.value;
+  if (!item) return "";
+  if (isAbsoluteTime(item.time)) return item.time;
+  if (!item.createdAt) return "";
+  return toStandardTime(item.time, item.createdAt);
+});
+
 /* ------------------------------ 未保存状态 ------------------------------ */
 const savedSnapshot = ref(JSON.stringify(form));
 const isDirty = computed(() => JSON.stringify(form) !== savedSnapshot.value);
 
-/** 条目就绪 / 切换条目时，把真实数据填进表单 */
+/**
+ * 保存成功后的整体刷新会再次触发下面的回填 watch，
+ * 用这个开关挡住，避免把用户刚刚保存的配置闪回成旧值。
+ */
+let suppressRefill = false;
+
+/** 已读取过提醒配置的条目 id：store 反复刷新时不重复请求 */
+let configLoadedFor: number | null = null;
+
+/** 本次会话里已经保存过的条目 id：阻止在途的读取结果覆盖刚保存的配置 */
+let configSavedFor: number | null = null;
+
+/** 正在把后端配置写进表单：此时不触发 override 的「恢复系统推荐」副作用 */
+let applyingConfig = false;
+
+/**
+ * 条目就绪 / 切换条目时，把真实数据填进表单。
+ * 提醒配置不在 Pinia 的展示字段里，按 id 单独从接口读取后反序列化回填。
+ */
 watch(
   memo,
   (value) => {
     if (!value) return;
 
-    // memo.time 可能是「明天下午2点」「2026年11月15日」这类中文文本，
-    // 统一交给 @/utils/memoTime 换算（含下午/晚上/中午/凌晨 与「N点」写法）；
-    // 解析不出来就留空，避免把非法值塞进 date-picker
-    const standardTime = toStandardTime(value.time);
+    // 已是标准绝对时间 → 原样回填；历史残留的相对词（「明天下午2点」等）
+    // 按该条记录自身的 createdAt 一次性换算，之后反复打开也不会逐日顺延。
+    // 解析不出来就留空，避免把非法值塞进 date-picker。
+    const standardTime = isStandardTime(value.time)
+      ? value.time
+      : value.createdAt
+        ? toStandardTime(value.time, value.createdAt)
+        : "";
 
-    form.title = value.title;
-    form.time = standardTime;
-    form.priority = value.priority;
-    // 目前没有独立的「预计通知时间」字段，先用同一个标准时间兜底
-    form.notifyAt = standardTime;
-    savedSnapshot.value = JSON.stringify(form);
+    if (!suppressRefill) {
+      form.title = value.title;
+      form.time = standardTime;
+      form.priority = value.priority;
+      savedSnapshot.value = JSON.stringify(form);
+    }
+
+    void ensureReminderConfig(value.id);
   },
   { immediate: true },
 );
+
+/**
+ * 反序列化 reminderConfig：
+ * 空串、JSON 损坏、字段类型不符等任何异常都退回默认配置，绝不阻断页面渲染。
+ */
+function parseReminderConfig(raw: unknown): ReminderConfig {
+  const fallback = createDefaultReminderConfig();
+  if (typeof raw !== "string" || !raw.trim()) return fallback;
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return fallback;
+
+    const record = parsed as Record<string, unknown>;
+    const notifyAt =
+      typeof record.notifyAt === "string" ? record.notifyAt.trim() : "";
+    const override = record.override === true;
+
+    const manualReminders: number[] = [];
+    if (Array.isArray(record.manualReminders)) {
+      for (const item of record.manualReminders) {
+        if (typeof item !== "number" || !Number.isFinite(item) || item <= 0) {
+          continue;
+        }
+        if (manualReminders.includes(item)) continue;
+
+        manualReminders.push(item);
+        if (manualReminders.length >= REMINDER_MAX_COUNT) break;
+      }
+      manualReminders.sort((a, b) => b - a);
+    }
+
+    return { notifyAt, override, manualReminders };
+  } catch (error) {
+    console.warn("[Detail] 提醒配置解析失败，已回退默认配置：", error);
+    return fallback;
+  }
+}
+
+/** 把表单里的提醒设置序列化成落库用的 JSON 字符串 */
+function serializeReminderConfig(): string {
+  const config: ReminderConfig = {
+    // 预计通知时间为空时按系统推荐提醒，落库仍存空字符串
+    notifyAt: form.notifyAt ?? "",
+    override: override.value,
+    manualReminders: override.value ? [...manualReminders.value] : [],
+  };
+  return JSON.stringify(config);
+}
+
+/** 把后端配置写进表单（override 的联动 watch 由 applyingConfig 挡住） */
+function applyReminderConfig(config: ReminderConfig): void {
+  applyingConfig = true;
+  form.notifyAt = config.notifyAt;
+  override.value = config.override;
+  manualReminders.value = config.override ? [...config.manualReminders] : [];
+  savedSnapshot.value = JSON.stringify(form);
+
+  void nextTick(() => {
+    applyingConfig = false;
+  });
+}
+
+/**
+ * 读取并回填提醒配置：
+ * - 直接刷新进入详情、本地缓存为空时同样能拿到后端真实配置
+ * - 接口异常、配置缺失、格式损坏一律按默认配置渲染
+ */
+async function ensureReminderConfig(id: number): Promise<void> {
+  if (!Number.isInteger(id) || id <= 0) return;
+  if (configLoadedFor === id) return;
+  configLoadedFor = id;
+
+  try {
+    const response = await fetch(`${API_BASE}/memos`);
+    if (!response.ok) throw new Error(`GET /memos 返回 ${response.status}`);
+
+    const list: unknown = await response.json();
+    if (!Array.isArray(list) || memoId.value !== id) return;
+    // 在途期间已经保存过：以用户刚保存的配置为准，忽略旧快照
+    if (configSavedFor === id) return;
+
+    const target = list.find(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        (item as { id?: unknown }).id === id,
+    ) as { reminderConfig?: unknown } | undefined;
+
+    applyReminderConfig(parseReminderConfig(target?.reminderConfig));
+  } catch (error) {
+    // 允许 store 下次刷新时重试；本次保持默认配置，不影响页面可用性
+    configLoadedFor = null;
+    console.warn("[Detail] 读取提醒配置失败，已按默认配置渲染：", error);
+  }
+}
 
 /* ------------------------------ 原文折叠 ------------------------------ */
 /** 原文默认展示高度（px）：超出后折叠，并在底部加渐隐遮罩 */
@@ -177,10 +333,9 @@ onUnmounted(() => {
 /** 「AI 智能概括」下方的要点列表（老数据没有该字段时为空数组） */
 const summaryKeyPoints = computed<string[]>(() => memo.value?.keyPoints ?? []);
 
-/** 后端接口地址（与 store 保持一致） */
-const API_BASE = "http://localhost:3000/api";
-
 async function handleSave() {
+  // 并发保存：loading 期间重复点击直接忽略，避免后到的请求用旧值覆盖新值
+  if (saving.value) return;
   if (!formRef.value) return;
   try {
     await formRef.value.validate();
@@ -198,20 +353,36 @@ async function handleSave() {
     ElMessage.warning("该条目还没同步到后端，请稍后再保存");
     return;
   }
+  // 数据尚未加载完成（store 里还没有这条）时不允许保存，避免用空值覆盖库中内容
+  if (!memo.value) {
+    ElMessage.warning("数据还在加载，请稍后再保存");
+    return;
+  }
 
-  // time 一律取表单里的标准字符串（YYYY-MM-DD HH:mm:ss），
-  // 绝不回传 memo.time（那是 AI 提取的中文原文，例如「2026年11月15日」）
-  const payload = {
+  // time 一律取表单里的标准字符串（YYYY-MM-DD HH:mm:ss），绝不回传 memo.time 的原文。
+  // 回填时已经按原记录 createdAt 固化过一次，这里再以同一个 createdAt 为基准归一，
+  // 保证「重复打开 / 反复保存」时时间值恒定，不会随保存当天漂移。
+  const standardTime = isStandardTime(form.time)
+    ? form.time
+    : toStandardTime(form.time, memo.value.createdAt);
+
+  const payload: Record<string, unknown> = {
     title: form.title,
-    time: form.time,
     priority: form.priority,
     // 类型 / 概括 / 原文不在表单里，原样回传，避免被后端清空
-    type: memo.value?.type ?? "日常",
-    aiSummary: memo.value?.aiSummary ?? "",
-    originText: memo.value?.originText ?? "",
+    type: memo.value.type,
+    aiSummary: memo.value.aiSummary,
+    originText: memo.value.originText ?? "",
+    // 提醒配置随保存一起落库（预计通知时间 / 是否手动覆盖 / 手动提醒时间点）
+    reminderConfig: serializeReminderConfig(),
   };
 
+  // 清空时间后不下发 time 字段：后端保留库中原值，不把空串写进去
+  if (standardTime) payload.time = standardTime;
+
   saving.value = true;
+  // 保存期间的 store 刷新不参与回填，防止把刚保存的配置闪回旧值
+  suppressRefill = true;
   try {
     const response = await fetch(`${API_BASE}/memos/${id}`, {
       method: "PUT",
@@ -225,36 +396,37 @@ async function handleSave() {
     // 否则 fetchMemos 替换整个数组、watch(memo) 再触发时，会拿旧的中文 time
     // 重新解析一遍，把用户刚改好的 form.time 覆盖回去。
     const current = memoStore.memos.find((item) => item.id === id);
-    if (current) current.time = form.time;
+    if (current && standardTime) current.time = standardTime;
 
+    // 已保存的条目不再接受在途读取结果，也不重复拉取配置
+    configLoadedFor = id;
+    configSavedFor = id;
     savedSnapshot.value = JSON.stringify(form);
     ElMessage.success("修改已保存");
 
-    // 再与后端对齐（此时 store 里的 time 已经是标准格式，watch 回填不会回跳）
-    await memoStore.fetchMemos();
+    // 再与后端对齐：force 会先等在途的初始化拉取结束再补拉一次，
+    // 保证拿到的是本次保存之后的数据，而不是初始化时的旧快照
+    await memoStore.fetchMemos(true);
   } catch (error) {
     console.warn("[Detail] 保存待办失败：", error);
     ElMessage.error("保存失败，请检查后端服务");
   } finally {
     saving.value = false;
+    suppressRefill = false;
   }
 }
 
 function goBack() {
-  router.push("/");
+  // 优先浏览器历史回退；直接刷新进入详情时没有站内历史，回总览兜底
+  const historyState = window.history.state as { back?: string | null } | null;
+  if (historyState?.back) {
+    router.back();
+    return;
+  }
+  router.push("/overview");
 }
 
 /* ------------------------------ 智能提醒 ------------------------------ */
-/**
- * 阶梯式提醒表：紧急程度 → 提前量（小时），从早到晚递减。
- * 高: 24 / 6 / 3 小时；中: 6 / 3 小时；低: 3 小时。
- */
-const suggestedHoursByPriority: Record<Priority, number[]> = {
-  high: [24, 6, 3],
-  medium: [6, 3],
-  low: [3],
-};
-
 /** 可手动添加的提醒预设 */
 const reminderPresets: ReminderPreset[] = [
   { hours: 168, label: "提前 7 天" },
@@ -273,19 +445,14 @@ const override = ref(false);
 const manualReminders = ref<number[]>([]);
 const pendingPreset = ref<number | null>(null);
 
-/** 提前量 → 文案："提前 24 小时" */
-function reminderLabel(hours: number): string {
-  return `提前 ${hours} 小时`;
-}
-
-/** 当前紧急程度对应的阶梯式提前量（跟随 form.priority 实时变化） */
+/** 当前紧急程度对应的阶梯式提前量（跟随 form.priority 实时变化，取自公共常量） */
 const suggestedReminderHours = computed<number[]>(
-  () => suggestedHoursByPriority[form.priority] ?? suggestedHoursByPriority.low,
+  () => REMINDER_ADVANCE_RULES[form.priority] ?? REMINDER_ADVANCE_RULES.low,
 );
 
 /** 页面展示用的阶梯式提醒文案：如 ["提前 24 小时", "提前 6 小时", "提前 3 小时"] */
 const suggestedReminders = computed<string[]>(() =>
-  suggestedReminderHours.value.map(reminderLabel),
+  suggestedReminderHours.value.map(formatAdvanceLabel),
 );
 
 /** 小时 → “3 天 / 6 小时”（手动预设用，7 天这类长间隔更易读） */
@@ -320,13 +487,15 @@ const reminderChips = computed<ReminderChip[]>(() => {
 
   return suggestedReminderHours.value.map((hours) => ({
     key: `auto-${hours}`,
-    label: reminderLabel(hours),
+    label: formatAdvanceLabel(hours),
     hours,
     removable: false,
   }));
 });
 
 watch(override, (enabled) => {
+  // 回填后端配置时不要把手动列表重置成系统推荐
+  if (applyingConfig) return;
   if (enabled) manualReminders.value = [...suggestedReminderHours.value];
 });
 
@@ -340,12 +509,12 @@ watch(
   (next, prev) => {
     if (!override.value) return;
 
-    const prevSuggested = suggestedHoursByPriority[prev] ?? [];
+    const prevSuggested = REMINDER_ADVANCE_RULES[prev] ?? [];
     const untouched =
       manualReminders.value.length === prevSuggested.length &&
       manualReminders.value.every((hours, index) => hours === prevSuggested[index]);
 
-    if (untouched) manualReminders.value = [...(suggestedHoursByPriority[next] ?? [])];
+    if (untouched) manualReminders.value = [...(REMINDER_ADVANCE_RULES[next] ?? [])];
   },
 );
 
@@ -358,6 +527,9 @@ const availablePresets = computed<ReminderPreset[]>(() =>
 function addReminder(): void {
   const hours = pendingPreset.value;
   if (hours === null || manualReminders.value.includes(hours)) return;
+  // 手动提醒沿用项目「最多 6 条」的上限
+  if (manualReminders.value.length >= REMINDER_MAX_COUNT) return;
+
   manualReminders.value = [...manualReminders.value, hours].sort(
     (a, b) => b - a,
   );
@@ -374,7 +546,7 @@ function removeReminder(hours: number): void {
 <template>
   <div class="detail-page">
     <!-- 顶部操作栏 -->
-    <header class="action-bar">
+    <header class="action-bar tw-page-head">
       <div class="bar-left">
         <el-button class="back-btn" text @click="goBack">
           <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -390,8 +562,8 @@ function removeReminder(hours: number): void {
         </el-button>
 
         <div class="bar-title">
-          <h1 class="page-title">详情</h1>
-          <p class="page-subtitle">
+          <h1 class="tw-page-title">详情</h1>
+          <p class="tw-page-subtitle">
             {{
               memo
                 ? "编辑主题、时间与提醒设置"
@@ -402,7 +574,7 @@ function removeReminder(hours: number): void {
       </div>
 
       <div class="bar-right">
-        <span v-if="isDirty" class="dirty-chip">有未保存的修改</span>
+        <span v-if="isDirty" class="dirty-chip tw-status-pill is-warn">有未保存的修改</span>
         <el-button
           type="primary"
           size="large"
@@ -417,9 +589,9 @@ function removeReminder(hours: number): void {
 
     <div class="content">
       <!-- 基础信息 -->
-      <section class="panel">
-        <div class="panel-head">
-          <span class="panel-icon">
+      <section class="tw-panel">
+        <div class="tw-panel-head">
+          <span class="tw-panel-icon">
             <svg
               class="icon"
               viewBox="0 0 24 24"
@@ -439,9 +611,9 @@ function removeReminder(hours: number): void {
               />
             </svg>
           </span>
-          <div class="panel-title-group">
-            <h2 class="panel-title">基础信息</h2>
-            <p class="panel-sub">修改后点击右上角「保存修改」生效</p>
+          <div class="tw-panel-title-group">
+            <h2 class="tw-panel-title">基础信息</h2>
+            <p class="tw-panel-sub">修改后点击右上角「保存修改」生效</p>
           </div>
         </div>
 
@@ -518,9 +690,9 @@ function removeReminder(hours: number): void {
       </section>
 
       <!-- AI 对照 -->
-      <section class="panel">
-        <div class="panel-head">
-          <span class="panel-icon is-ai">
+      <section class="tw-panel">
+        <div class="tw-panel-head">
+          <span class="tw-panel-icon is-ai">
             <svg
               class="icon"
               viewBox="0 0 24 24"
@@ -540,9 +712,9 @@ function removeReminder(hours: number): void {
               />
             </svg>
           </span>
-          <div class="panel-title-group">
-            <h2 class="panel-title">AI 对照</h2>
-            <p class="panel-sub">
+          <div class="tw-panel-title-group">
+            <h2 class="tw-panel-title">AI 对照</h2>
+            <p class="tw-panel-sub">
               OCR 原文与模型概括逐句对照，方便核对关键信息
             </p>
           </div>
@@ -625,7 +797,7 @@ function removeReminder(hours: number): void {
           <div class="compare-col summary-col">
             <div class="col-head">
               <span class="col-title">
-                <span class="ai-badge">AI</span>
+                <span class="tw-ai-badge">AI</span>
                 智能概括
               </span>
             </div>
@@ -650,7 +822,7 @@ function removeReminder(hours: number): void {
             </p>
 
             <ul class="summary-points">
-              <li>时间：{{ memo?.time || "未填写" }}</li>
+              <li>时间：{{ displayTime || "未记录时间" }}</li>
               <li>类型：{{ memo?.type || "未分类" }}</li>
               <li>优先级：{{ memoPriorityLabel }}</li>
             </ul>
@@ -668,9 +840,9 @@ function removeReminder(hours: number): void {
       </section>
 
       <!-- 智能提醒 -->
-      <section class="panel">
-        <div class="panel-head">
-          <span class="panel-icon is-ai">
+      <section class="tw-panel">
+        <div class="tw-panel-head">
+          <span class="tw-panel-icon is-ai">
             <svg
               class="icon"
               viewBox="0 0 24 24"
@@ -691,9 +863,9 @@ function removeReminder(hours: number): void {
               />
             </svg>
           </span>
-          <div class="panel-title-group">
-            <h2 class="panel-title">智能提醒</h2>
-            <p class="panel-sub">系统会按紧急程度自动推荐提醒节奏</p>
+          <div class="tw-panel-title-group">
+            <h2 class="tw-panel-title">智能提醒</h2>
+            <p class="tw-panel-sub">系统会按紧急程度自动推荐提醒节奏</p>
           </div>
 
           <label class="override-switch">
@@ -781,7 +953,10 @@ function removeReminder(hours: number): void {
             v-model="pendingPreset"
             class="preset-select"
             placeholder="添加提醒时间点"
-            :disabled="!availablePresets.length"
+            :disabled="
+              !availablePresets.length ||
+              manualReminders.length >= REMINDER_MAX_COUNT
+            "
           >
             <el-option
               v-for="preset in availablePresets"
@@ -814,37 +989,17 @@ function removeReminder(hours: number): void {
 </template>
 
 <style scoped lang="scss">
-$brand: #4f46e5;
-$brand-soft: var(--brand-soft);
-$ai: #8b5cf6;
-$ai-deep: #7c3aed;
-$ai-soft: var(--ai-soft);
 $text: var(--app-text);
 $text-muted: var(--app-text-muted);
 $text-subtle: var(--app-text-subtle);
-$bg: var(--app-bg);
-$surface: var(--app-surface);
-$line: var(--app-line);
-$radius-lg: 16px;
-$radius-md: 12px;
-$radius-sm: 8px;
-$shadow-card:
-  0 1px 2px rgba(16, 24, 40, 0.04),
-  0 1px 3px rgba(16, 24, 40, 0.06);
 
 .detail-page {
-  --el-color-primary: #{$brand};
-  --el-color-primary-light-3: #847eed;
-  --el-color-primary-light-5: #a7a3f2;
-  --el-color-primary-light-7: #cac8f7;
-  --el-color-primary-light-8: #dcdafa;
-  --el-color-primary-light-9: #edeefc;
-  --el-color-primary-dark-2: #3f38b7;
+  /* EP 主色 / 控件底色由 main.css 全局令牌统一提供，页面不再局部覆盖 */
   --el-text-color-regular: #{$text};
-  --el-border-radius-base: #{$radius-sm};
+  --el-border-radius-base: var(--radius-sm);
 
   color: $text;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .icon {
@@ -853,27 +1008,21 @@ $shadow-card:
   flex-shrink: 0;
 }
 
-/* ---------------- 顶部操作栏 ---------------- */
+/* ---------------- 顶部操作栏：宽度/间距走 tw-page-head，本页只调对齐 ---------------- */
 .action-bar {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 20px;
-  flex-wrap: wrap;
-  max-width: 1080px;
-  margin: 0 auto 20px;
 }
 
 .bar-left {
   display: flex;
-  // align-items: center;
   gap: 14px;
 }
 
 .back-btn {
   padding: 0 8px 0 4px;
   color: $text-muted;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 500;
 
   .icon {
@@ -883,22 +1032,11 @@ $shadow-card:
   }
 
   &:hover {
-    color: $brand;
+    color: var(--brand);
     background: transparent;
   }
-}
 
-.page-title {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-}
-
-.page-subtitle {
-  margin-top: 4px;
-  font-size: 13px;
-  color: $text-muted;
+  @include focus-ring;
 }
 
 .bar-right {
@@ -907,53 +1045,48 @@ $shadow-card:
   gap: 12px;
 }
 
+/* 「有未保存的修改」胶囊：样式统一走 tw-status-pill is-warn */
 .dirty-chip {
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--warn-soft);
-  color: var(--warn-text);
-  font-size: 12px;
-  font-weight: 600;
+  flex-shrink: 0;
 }
 
 .save-btn {
   min-width: 116px;
   height: 42px;
   border: none;
-  border-radius: $radius-md;
+  border-radius: var(--radius-md);
   font-weight: 600;
-  box-shadow: 0 6px 16px -8px rgba($brand, 0.7);
+  box-shadow: 0 6px 16px -8px tint(brand, 70%);
   transition:
-    transform 0.2s var(--ease),
-    box-shadow 0.2s ease;
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 
-  &:hover {
+  &:hover:not(:disabled):not(.is-disabled) {
     transform: translateY(-1px);
-    box-shadow: 0 10px 22px -10px rgba($brand, 0.8);
+    box-shadow: 0 10px 22px -10px tint(brand, 80%);
   }
 
-  &:active {
+  &:active:not(:disabled):not(.is-disabled) {
     transform: translateY(0) scale(0.98);
-    transition-duration: 0.1s;
   }
+
+  /* 禁用态不抬起、不发光 */
+  &:disabled,
+  &.is-disabled {
+    transform: none;
+    box-shadow: none;
+  }
+
+  @include focus-ring;
 }
 
 /* ---------------- 卡片 ---------------- */
 .content {
-  max-width: 1080px;
+  max-width: var(--content-max);
   margin: 0 auto;
 }
 
-.panel {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-
-  padding: 22px 24px 24px;
-
+.tw-panel {
   animation: rise-in 0.5s var(--ease) backwards;
 
   &:nth-of-type(1) {
@@ -973,48 +1106,7 @@ $shadow-card:
   }
 }
 
-.panel-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.panel-icon {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  background: $brand-soft;
-  color: $brand;
-  flex-shrink: 0;
-
-  .icon {
-    width: 19px;
-    height: 19px;
-  }
-
-  &.is-ai {
-    background: linear-gradient(135deg, rgba($ai, 0.14), rgba($ai, 0.06));
-    color: $ai;
-  }
-}
-
-.panel-title-group {
-  min-width: 0;
-}
-
-.panel-title {
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1.4;
-}
-
-.panel-sub {
-  margin-top: 2px;
-  font-size: 12.5px;
-  color: $text-subtle;
-}
+/* 面板头结构统一走全局 tw-panel-* */
 
 /* ---------------- 表单 ---------------- */
 .detail-form {
@@ -1028,10 +1120,10 @@ $shadow-card:
 .detail-form :deep(.el-form-item__label) {
   margin-bottom: 6px;
   padding: 0;
-  font-size: 13px;
+  color: var(--app-text);
+  font-size: var(--fs-sm);
   font-weight: 600;
   line-height: 1.4;
-  color: var(--app-text);
 }
 
 .form-row {
@@ -1051,21 +1143,11 @@ $shadow-card:
   width: 100%;
 }
 
+/* 底色 / 描边 / hover / focus 统一走 main.css 的全局表单规则，这里只定尺寸 */
 .detail-form :deep(.el-input__wrapper),
 .detail-form :deep(.el-select__wrapper) {
   min-height: 40px;
-  border-radius: $radius-sm;
-  background: var(--input-bg);
-  box-shadow: 0 0 0 1px $line inset;
-  transition: box-shadow 0.2s ease;
-
-  &:hover {
-    box-shadow: 0 0 0 1px var(--app-line) inset;
-  }
-
-  &.is-focus {
-    box-shadow: 0 0 0 2px rgba($brand, 0.3) inset;
-  }
+  border-radius: var(--radius-sm);
 }
 
 .detail-form :deep(.el-input__count) {
@@ -1077,9 +1159,9 @@ $shadow-card:
 .field-hint {
   width: 100%;
   margin-top: 6px;
-  font-size: 12px;
+  color: $text-muted;
+  font-size: var(--fs-xs);
   line-height: 1.6;
-  color: $text-subtle;
 
   &.is-warn {
     color: var(--warn-text);
@@ -1107,8 +1189,10 @@ $shadow-card:
   display: flex;
   flex-direction: column;
   padding: 18px 20px;
-  border-radius: $radius-md;
-  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  border-radius: var(--radius-md);
+  transition:
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 .source-col:hover {
@@ -1117,18 +1201,18 @@ $shadow-card:
 }
 
 .summary-col:hover {
-  border-color: rgba($ai, 0.55);
-  box-shadow: 0 8px 20px -14px rgba($ai, 0.5);
+  border-color: tint(ai, 55%);
+  box-shadow: 0 8px 20px -14px tint(ai, 50%);
 }
 
 .source-col {
-  border: 1px solid $line;
+  border: 1px solid var(--app-line);
   background: var(--chip-bg);
 }
 
 .summary-col {
-  border: 1px solid rgba($ai, 0.35);
-  background: $ai-soft;
+  border: 1px solid tint(ai, 35%);
+  background: var(--ai-soft);
 }
 
 .col-head {
@@ -1143,9 +1227,9 @@ $shadow-card:
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 13px;
-  font-weight: 700;
   color: var(--app-text);
+  font-size: var(--fs-sm);
+  font-weight: 700;
 }
 
 .summary-col .col-title {
@@ -1153,14 +1237,14 @@ $shadow-card:
 }
 
 .col-meta {
-  font-size: 12px;
   color: $text-subtle;
+  font-size: var(--fs-xs);
 }
 
 .source-text {
-  font-size: 13px;
-  line-height: 1.9;
   color: var(--app-text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.9;
   white-space: pre-wrap;
 }
 
@@ -1199,14 +1283,14 @@ $shadow-card:
   height: 26px;
   margin-top: 6px;
   padding: 0 2px;
-  font-size: 12.5px;
+  color: var(--brand);
+  font-size: var(--fs-sm);
   font-weight: 600;
-  color: $brand;
 
   .icon {
     width: 14px;
     height: 14px;
-    transition: transform 0.28s ease;
+    transition: transform var(--dur) var(--ease);
 
     &.is-flipped {
       transform: rotate(180deg);
@@ -1218,6 +1302,8 @@ $shadow-card:
     background: transparent;
     opacity: 0.82;
   }
+
+  @include focus-ring;
 }
 
 .source-file {
@@ -1226,8 +1312,8 @@ $shadow-card:
   gap: 6px;
   margin-top: auto;
   padding-top: 14px;
-  font-size: 12px;
   color: $text-subtle;
+  font-size: var(--fs-xs);
 
   .icon {
     width: 14px;
@@ -1235,23 +1321,13 @@ $shadow-card:
   }
 }
 
-.ai-badge {
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, $ai, $ai-deep);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 18px;
-  letter-spacing: 0.04em;
-}
+/* AI 徽标统一走全局 .tw-ai-badge（紫渐变身份色） */
 
 .summary-text {
-  font-size: 13.5px;
+  color: var(--ai-text);
+  font-size: var(--fs-base);
   font-weight: 600;
   line-height: 1.75;
-  color: var(--ai-text);
 }
 
 /* ---------------- AI 要点列表 ---------------- */
@@ -1268,9 +1344,9 @@ $shadow-card:
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 12.8px;
-  line-height: 1.7;
   color: var(--app-text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
 }
 
 .key-point-index {
@@ -1281,7 +1357,7 @@ $shadow-card:
   border-radius: 6px;
   background: var(--ai-soft);
   color: var(--ai-text);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   line-height: 18px;
   text-align: center;
@@ -1294,8 +1370,8 @@ $shadow-card:
 
 .key-points-empty {
   margin-top: 10px;
-  font-size: 12.5px;
-  color: $text-subtle;
+  color: $text-muted;
+  font-size: var(--fs-sm);
 }
 
 .summary-points {
@@ -1306,9 +1382,9 @@ $shadow-card:
   li {
     position: relative;
     padding-left: 14px;
-    font-size: 12.5px;
-    line-height: 1.9;
     color: var(--app-text-muted);
+    font-size: var(--fs-sm);
+    line-height: 1.9;
 
     &::before {
       content: "";
@@ -1318,7 +1394,7 @@ $shadow-card:
       width: 5px;
       height: 5px;
       border-radius: 50%;
-      background: rgba($ai, 0.65);
+      background: tint(ai, 65%);
     }
   }
 }
@@ -1331,9 +1407,9 @@ $shadow-card:
 }
 
 .ai-tag {
-  border-color: rgba($ai, 0.35);
+  border-color: tint(ai, 35%);
   background: var(--chip-bg);
-  color: $ai-deep;
+  color: var(--ai-text);
   font-weight: 500;
 }
 
@@ -1347,8 +1423,8 @@ $shadow-card:
 }
 
 .override-label {
-  font-size: 12.5px;
   color: $text-muted;
+  font-size: var(--fs-sm);
 }
 
 .remind-tip {
@@ -1357,21 +1433,21 @@ $shadow-card:
   gap: 10px;
   margin-top: 18px;
   padding: 12px 14px;
-  border: 1px solid rgba($ai, 0.22);
-  border-radius: $radius-md;
-  background: rgba($ai, 0.07);
+  border: 1px solid tint(ai, 22%);
+  border-radius: var(--radius-md);
+  background: tint(ai, 7%);
 
   .icon {
     width: 15px;
     height: 15px;
     margin-top: 3px;
-    color: $ai-deep;
+    color: var(--ai);
   }
 
   p {
-    font-size: 12.5px;
-    line-height: 1.75;
     color: var(--app-text-muted);
+    font-size: var(--fs-sm);
+    line-height: 1.75;
   }
 
   b {
@@ -1388,9 +1464,9 @@ $shadow-card:
 }
 
 .remind-label {
-  font-size: 13px;
-  font-weight: 600;
   color: var(--app-text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
 }
 
 .reminder-chips {
@@ -1404,16 +1480,16 @@ $shadow-card:
   align-items: center;
   gap: 6px;
   padding: 5px 12px;
-  border: 1px solid $line;
-  border-radius: 999px;
+  border: 1px solid var(--app-line);
+  border-radius: var(--radius-pill);
   background: var(--chip-bg);
-  font-size: 12.5px;
   color: var(--app-text-muted);
+  font-size: var(--fs-sm);
   transition:
-    border-color 0.2s ease,
-    background 0.2s ease,
-    transform 0.2s var(--ease),
-    box-shadow 0.2s ease;
+    border-color var(--dur) var(--ease),
+    background var(--dur) var(--ease),
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 
   &:hover {
     transform: translateY(-1px);
@@ -1427,12 +1503,12 @@ $shadow-card:
   }
 
   &.is-manual {
-    border-color: rgba($ai, 0.4);
-    background: rgba($ai, 0.06);
+    border-color: tint(ai, 40%);
+    background: tint(ai, 6%);
     color: var(--ai-text);
 
     .icon {
-      color: $ai;
+      color: var(--ai);
     }
   }
 }
@@ -1443,19 +1519,21 @@ $shadow-card:
   border: none;
   background: transparent;
   color: $text-subtle;
-  font-size: 14px;
+  font-size: var(--fs-base);
   line-height: 1;
   cursor: pointer;
-  transition: color 0.2s ease;
+  transition: color var(--dur) var(--ease);
 
   &:hover {
-    color: #ef4444;
+    color: var(--danger);
   }
+
+  @include focus-ring;
 }
 
 .reminder-empty {
-  font-size: 12.5px;
-  color: $text-subtle;
+  color: $text-muted;
+  font-size: var(--fs-sm);
 }
 
 .manual-row {
@@ -1472,17 +1550,17 @@ $shadow-card:
 
 .add-btn {
   height: 34px;
-  border-radius: $radius-sm;
+  border-radius: var(--radius-sm);
 }
 
 .remind-hint {
   margin-top: 12px;
-  font-size: 12px;
   color: $text-subtle;
+  font-size: var(--fs-xs);
 }
 
-/* ---------------- 响应式 ---------------- */
-@media (max-width: 760px) {
+/* ---------------- 响应式（断点统一走 _mixins 的 mobile(768px)，原 760px） ---------------- */
+@include mobile {
   .action-bar {
     align-items: flex-start;
   }
@@ -1498,13 +1576,18 @@ $shadow-card:
     justify-content: space-between;
   }
 
-  .panel-head {
+  .tw-panel-head {
     flex-wrap: wrap;
   }
 
   .preset-select {
     flex: 1;
     width: auto;
+  }
+
+  /* 给右下角 AI 悬浮球留出高度 */
+  .content {
+    padding-bottom: 44px;
   }
 }
 </style>

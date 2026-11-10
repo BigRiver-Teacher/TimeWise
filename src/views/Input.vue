@@ -5,7 +5,7 @@ import { ElMessage } from "element-plus";
 import type { UploadFile, UploadUserFile } from "element-plus";
 import { useMemoStore } from "@/stores/memo";
 import { useSettingsStore } from "@/stores/settings";
-import { toDateKey, toStandardTime } from "@/utils/memoTime";
+import { toStandardTime } from "@/utils/memoTime";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import mammoth from "mammoth";
@@ -60,6 +60,11 @@ interface ParsedMemo {
   keyPoints: string[];
   points: string[];
   tags: string[];
+  /**
+   * 解析完成时的时间戳：相对时间词（明天 / 后天 / 两天内…）一律以它为基准换算，
+   * 之后无论隔多久再点保存，结果都不会顺延。
+   */
+  capturedAt: number;
 }
 
 /** 本地 Ollama 配置 */
@@ -89,8 +94,21 @@ const extractError = ref("");
 const activeName = ref("");
 /** 本次解析的数据来源 */
 const parseSource = ref<ParseSourceInfo | null>(null);
-/** 解析完成后的结构化结果 */
-const parseResult = ref<ParsedMemo | null>(null);
+/** 解析完成后的结构化结果：一次解析可能产出多条待办 */
+const parseResult = ref<ParsedMemo[]>([]);
+
+/**
+ * 结果卡片展示的绝对时间：以解析完成时刻 capturedAt 为基准一次性换算。
+ * 解析不出具体时间时显示「未记录时间」，不保留相对词、不伪造数值。
+ */
+function previewTimeOf(item: ParsedMemo): string {
+  return toStandardTime(item.time, item.capturedAt) || "未记录时间";
+}
+
+/** 所有结果加起来的关键点数量，用于头部摘要 */
+const totalPoints = computed<number>(() =>
+  parseResult.value.reduce((sum, item) => sum + item.points.length, 0),
+);
 
 /**
  * 文本通道的最终内容：文档提取结果 + 文本框补充说明。
@@ -286,7 +304,7 @@ async function processUpload(uploadFile: UploadFile): Promise<void> {
   if (!raw) return;
 
   activeName.value = raw.name;
-  parseResult.value = null;
+  parseResult.value = [];
   isDone.value = false;
 
   const kind = detectKind(raw);
@@ -442,15 +460,29 @@ ${buildSummaryRule()}
 其中 priority 只能填 high、medium、low 三者之一，必须按上面的规则判定。
 另需输出 "keyPoints"：从原文提炼 2-4 个关键要点，逐条写成「维度：内容」，
 只保留原文里确实出现的信息（截止时间、交付要求、注意事项、地点、参与方式等），
-每条不超过 20 字，不要与 aiSummary 重复。格式如下：
-{
-  "title": "任务标题(如：参加创新大赛)",
-  "time": "截止时间或相关时间",
-  "priority": "high/medium/low",
-  "type": "任务类型(如：比赛/学习)",
-  "aiSummary": "一句话摘要概括核心内容",
-  "keyPoints": ["截止时间：11月15日", "交付要求：需要包含源码和文档", "注意事项：严禁抄袭"]
-}`;
+每条不超过 20 字，不要与 aiSummary 重复。
+【多任务提取要求】：如果原文出现了多张表格、多次会议、多个截止时间或多个独立任务，
+请务必全部提取出来，每个任务对应数组里的一个对象，不要合并、不要遗漏，也不要拆得过碎；
+即使只有一个任务，也必须返回「只含一个对象的数组」，永远不要返回单个对象。
+格式如下（数组，每个对象结构相同）：
+[
+  {
+    "title": "任务标题(如：参加创新大赛)",
+    "time": "截止时间或相关时间",
+    "priority": "high/medium/low",
+    "type": "任务类型(如：比赛/学习)",
+    "aiSummary": "一句话摘要概括核心内容",
+    "keyPoints": ["截止时间：11月15日", "交付要求：需要包含源码和文档", "注意事项：严禁抄袭"]
+  },
+  {
+    "title": "实验2",
+    "time": "2026-09-23 10:00:00",
+    "priority": "medium",
+    "type": "实验",
+    "aiSummary": "第 2 份实验报告的要求与截止时间",
+    "keyPoints": ["截止时间：9月23日 10:00", "交付要求：实验报告 PDF"]
+  }
+]`;
 }
 
 /** 视觉通道的 Prompt：先让模型读图，再直接吐 JSON */
@@ -468,15 +500,29 @@ ${buildSummaryRule()}
 其中 priority 只能填 high、medium、low 三者之一，必须按上面的规则判定。
 另需输出 "keyPoints"：从原文提炼 2-4 个关键要点，逐条写成「维度：内容」，
 只保留原文里确实出现的信息（截止时间、交付要求、注意事项、地点、参与方式等），
-每条不超过 20 字，不要与 aiSummary 重复。格式如下：
-{
-  "title": "任务标题(如：参加创新大赛)",
-  "time": "截止时间或相关时间",
-  "priority": "high/medium/low",
-  "type": "任务类型(如：比赛/学习)",
-  "aiSummary": "一句话摘要概括核心内容",
-  "keyPoints": ["截止时间：11月15日", "交付要求：需要包含源码和文档", "注意事项：严禁抄袭"]
-}`;
+每条不超过 20 字，不要与 aiSummary 重复。
+【多任务提取要求】：如果图片里出现了多张表格、多次会议、多个截止时间或多个独立任务，
+请务必全部提取出来，每个任务对应数组里的一个对象，不要合并、不要遗漏，也不要拆得过碎；
+即使只有一个任务，也必须返回「只含一个对象的数组」，永远不要返回单个对象。
+格式如下（数组，每个对象结构相同）：
+[
+  {
+    "title": "任务标题(如：参加创新大赛)",
+    "time": "截止时间或相关时间",
+    "priority": "high/medium/low",
+    "type": "任务类型(如：比赛/学习)",
+    "aiSummary": "一句话摘要概括核心内容",
+    "keyPoints": ["截止时间：11月15日", "交付要求：需要包含源码和文档", "注意事项：严禁抄袭"]
+  },
+  {
+    "title": "实验2",
+    "time": "2026-09-23 10:00:00",
+    "priority": "medium",
+    "type": "实验",
+    "aiSummary": "第 2 份实验报告的要求与截止时间",
+    "keyPoints": ["截止时间：9月23日 10:00", "交付要求：实验报告 PDF"]
+  }
+]`;
 }
 
 interface OllamaGenerateResponse {
@@ -624,7 +670,18 @@ function parseModelJson(raw: string): unknown {
   try {
     return JSON.parse(cleaned);
   } catch {
-    // 兜底：有些模型会在 JSON 前后加解释文字，截取第一个 { 到最后一个 }
+    // 兜底：模型常在 JSON 前后加解释文字
+    // 现在期望的是数组，先按 [ ... ] 截取，失败了再退回 { ... } 截取
+    const arrayStart = cleaned.indexOf("[");
+    const arrayEnd = cleaned.lastIndexOf("]");
+    if (arrayStart !== -1 && arrayEnd > arrayStart) {
+      try {
+        return JSON.parse(cleaned.slice(arrayStart, arrayEnd + 1));
+      } catch {
+        // 继续尝试对象截取
+      }
+    }
+
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
     if (start === -1 || end <= start)
@@ -661,8 +718,31 @@ function toKeyPoints(value: unknown, fallback: string[]): string[] {
   return points.length ? points : fallback;
 }
 
-/** 把模型输出收敛成页面需要的结构，字段缺失时用兜底值，避免整页崩掉 */
-function toParsedMemo(value: unknown): ParsedMemo {
+/**
+ * 模型返回的可能是：对象数组、单个对象、或 { tasks: [...] } 这类多包一层的写法。
+ * 统一收敛成「对象数组」，单个对象自动包装成 [对象]。
+ */
+function toMemoRecords(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    // 有些小模型会多包一层
+    for (const key of ["tasks", "items", "data", "memos", "list", "result"]) {
+      const nested = record[key];
+      if (Array.isArray(nested)) return nested;
+    }
+    return [value];
+  }
+
+  return [];
+}
+
+/** 单条记录 → ParsedMemo；字段缺失时用兜底值，避免整页崩掉 */
+function toParsedMemoItem(
+  value: unknown,
+  capturedAt: number,
+): ParsedMemo {
   const record = (
     typeof value === "object" && value !== null ? value : {}
   ) as Record<string, unknown>;
@@ -698,7 +778,20 @@ function toParsedMemo(value: unknown): ParsedMemo {
     // 模板沿用原来的 points / tags
     points: keyPoints,
     tags: [type],
+    // 同一次解析的所有条目共用一个基准时间，保存时不再取「当前时刻」
+    capturedAt,
   };
+}
+
+/**
+ * 把模型输出收敛成页面需要的结构。
+ * 现在返回数组（一次解析可能有多条待办），同一次解析的 capturedAt 完全一致。
+ */
+function toParsedMemo(value: unknown): ParsedMemo[] {
+  const capturedAt = Date.now();
+  return toMemoRecords(value).map((item) =>
+    toParsedMemoItem(item, capturedAt),
+  );
 }
 
 /** 触发解析：读取阶段动画 → 请求本地 Ollama → 渲染结构化结果 */
@@ -740,7 +833,7 @@ async function startParse(): Promise<void> {
         }
       : null;
 
-  parseResult.value = null;
+  parseResult.value = [];
   isProcessing.value = true;
   isDone.value = false;
   progress.value = 0;
@@ -760,7 +853,18 @@ async function startParse(): Promise<void> {
     const rawResponse = await requestLocalModel(modelInput);
     if (runId !== parseRunId) return;
 
-    parseResult.value = toParsedMemo(parseModelJson(rawResponse));
+    // 一次解析可能产出多条待办，统一按数组处理
+    const parsed = toParsedMemo(parseModelJson(rawResponse));
+    if (!parsed.length) {
+      parseResult.value = [];
+      parseStage.value = "idle";
+      progress.value = 0;
+      progressTarget.value = 0;
+      ElMessage.warning("没有识别到待办，试着补一句更完整的时间或任务描述");
+      return;
+    }
+
+    parseResult.value = parsed;
     progressTarget.value = 100;
     progress.value = 100;
     parseStage.value = "done";
@@ -772,7 +876,7 @@ async function startParse(): Promise<void> {
     console.error("[Input] 本地 AI 解析失败：", error);
     ElMessage.error("本地AI连接失败，请检查Ollama服务");
 
-    parseResult.value = null;
+    parseResult.value = [];
     parseStage.value = "idle";
     progress.value = 0;
     progressTarget.value = 0;
@@ -807,10 +911,10 @@ const router = useRouter();
 const memoStore = useMemoStore();
 const saving = ref(false);
 
-/** 把解析结果写入 Pinia，提示成功并回到首页 */
+/** 把解析出的多条结果批量写入 Pinia，提示成功后回到首页 */
 async function saveToTodo(): Promise<void> {
-  const result = parseResult.value;
-  if (!result || saving.value) return;
+  const results = parseResult.value;
+  if (!results.length || saving.value) return;
 
   saving.value = true;
 
@@ -821,22 +925,39 @@ async function saveToTodo(): Promise<void> {
         ? extracted.value.content
         : noticeText.value.trim();
 
-    // AI 提取的时间可能是「明天下午两点」这类相对说法，必须先换算成绝对时间再入库：
-    // 否则库里存的相对词永远不会「变旧」，首页的逾期判断和提醒都会失效。
-    // 解析不出来（或为空）时兜底成「今天的 10:00:00」，不能用 00:00:00。
-    const standardTime =
-      toStandardTime(result.time) || `${toDateKey(new Date())} 10:00:00`;
+    let syncedCount = 0;
 
-    await memoStore.addMemo({
-      title: result.title,
-      time: standardTime,
-      priority: result.priority,
-      type: result.type,
-      aiSummary: result.aiSummary,
-      originText,
-      keyPoints: result.keyPoints,
-    });
-    ElMessage.success("已保存至待办清单");
+    // 逐条写入：大部分条目会很快返回，串行可以保证后端自增 id 与列表顺序一致
+    for (const item of results) {
+      // AI 提取的时间可能是「明天下午两点」这类相对说法，必须在解析完成那一刻的
+      // capturedAt 上一次性换算成绝对时间：隔夜再保存也不会顺延到第二天。
+      // 解析不出来（或为空）时保持空串，由页面沿用「未记录时间」展示，绝不伪造「今天 10:00」。
+      const standardTime = toStandardTime(item.time, item.capturedAt);
+
+      const { synced } = await memoStore.addMemo({
+        title: item.title,
+        time: standardTime,
+        priority: item.priority,
+        type: item.type,
+        aiSummary: item.aiSummary,
+        originText,
+        keyPoints: item.keyPoints,
+      });
+
+      if (synced) syncedCount += 1;
+    }
+
+    // 全部同步成功才报「成功导入」，部分失败时说明差异
+    if (syncedCount === results.length) {
+      ElMessage.success(`成功导入 ${results.length} 条待办`);
+    } else if (syncedCount === 0) {
+      ElMessage.warning("未同步（仅本地暂存）");
+    } else {
+      ElMessage.warning(
+        `成功导入 ${syncedCount} 条，另有 ${results.length - syncedCount} 条仅本地暂存`,
+      );
+    }
+
     void router.push("/").finally(() => {
       saving.value = false;
     });
@@ -885,18 +1006,18 @@ const statusClass = computed(() => {
 <template>
   <div class="input-page">
     <!-- 顶部：标题 -->
-    <header class="page-head">
-      <h1 class="page-title">信息录入</h1>
-      <p class="page-subtitle">
+    <header class="tw-page-head">
+      <h1 class="tw-page-title">信息录入</h1>
+      <p class="tw-page-subtitle">
         粘贴老师通知，或直接上传图片 / 文档，AI 自动提取关键信息。
       </p>
     </header>
 
     <div class="workbench">
       <!-- 左：多模态输入 -->
-      <section class="panel input-panel">
-        <div class="panel-head">
-          <span class="panel-icon">
+      <section class="input-panel tw-panel">
+        <div class="tw-panel-head">
+          <span class="tw-panel-icon">
             <svg
               class="icon"
               viewBox="0 0 24 24"
@@ -911,9 +1032,9 @@ const statusClass = computed(() => {
               />
             </svg>
           </span>
-          <div class="panel-title-group">
-            <h2 class="panel-title">多模态输入</h2>
-            <p class="panel-sub">文本、图片、文档可任选其一，也可混合提交</p>
+          <div class="tw-panel-title-group">
+            <h2 class="tw-panel-title">多模态输入</h2>
+            <p class="tw-panel-sub">文本、图片、文档可任选其一，也可混合提交</p>
           </div>
         </div>
 
@@ -1011,9 +1132,9 @@ const statusClass = computed(() => {
       </section>
 
       <!-- 右：AI 处理状态 -->
-      <aside class="panel status-panel" aria-live="polite">
-        <div class="panel-head">
-          <span class="panel-icon is-ai">
+      <aside class="status-panel tw-panel" aria-live="polite">
+        <div class="tw-panel-head">
+          <span class="tw-panel-icon is-ai">
             <svg
               class="icon"
               viewBox="0 0 24 24"
@@ -1033,9 +1154,9 @@ const statusClass = computed(() => {
               />
             </svg>
           </span>
-          <div class="panel-title-group">
-            <h2 class="panel-title">AI 处理状态</h2>
-            <p class="panel-sub">解析耗时约 3 秒</p>
+          <div class="tw-panel-title-group">
+            <h2 class="tw-panel-title">AI 处理状态</h2>
+            <p class="tw-panel-sub">解析耗时约 3 秒</p>
           </div>
           <span class="status-chip" :class="statusClass">
             <i v-if="isProcessing" class="status-dot"></i>
@@ -1073,7 +1194,7 @@ const statusClass = computed(() => {
           <p class="progress-hint">解析过程中请勿关闭页面</p>
         </div>
 
-        <div v-else-if="isDone && parseResult" class="result-block">
+        <div v-else-if="isDone && parseResult.length" class="result-block">
           <div class="result-head">
             <span class="result-check">
               <svg
@@ -1094,33 +1215,44 @@ const statusClass = computed(() => {
             <div>
               <p class="result-title">解析完成</p>
               <p class="result-sub">
-                识别到 1 条待办 · {{ parseResult.points.length }} 个关键点
+                识别到 {{ parseResult.length }} 条待办 · 共
+                {{ totalPoints }} 个关键点
               </p>
             </div>
           </div>
 
-          <p class="result-summary">{{ parseResult.aiSummary }}</p>
-
-          <div class="result-tags">
-            <span class="result-chip">{{ parseResult.type }}</span>
-            <span
-              class="result-chip"
-              :style="{ color: priorityMeta[parseResult.priority].color }"
+          <!-- 一次解析可能有多条，逐条渲染成卡片 -->
+          <div class="result-list">
+            <article
+              v-for="(item, index) in parseResult"
+              :key="`${index}-${item.title}`"
+              class="result-card"
             >
-              {{ priorityMeta[parseResult.priority].label }}优先级
-            </span>
-            <span class="result-chip">{{ parseResult.time }}</span>
+              <div class="result-card-head">
+                <span class="result-index">{{ index + 1 }}</span>
+                <p class="result-card-title">{{ item.title }}</p>
+              </div>
+
+              <div class="result-tags">
+                <span class="result-chip">{{ item.type }}</span>
+                <span
+                  class="result-chip"
+                  :style="{ color: priorityMeta[item.priority].color }"
+                >
+                  {{ priorityMeta[item.priority].label }}优先级
+                </span>
+                <span class="result-chip">{{ previewTimeOf(item) }}</span>
+              </div>
+
+              <p class="result-summary">{{ item.aiSummary }}</p>
+
+              <ul class="result-points">
+                <li v-for="point in item.points" :key="point">
+                  {{ point }}
+                </li>
+              </ul>
+            </article>
           </div>
-
-          <p class="result-field">
-            <span class="result-field-label">主题</span>{{ parseResult.title }}
-          </p>
-
-          <ul class="result-points">
-            <li v-for="point in parseResult.points" :key="point">
-              {{ point }}
-            </li>
-          </ul>
 
           <p v-if="parseSource" class="result-source">
             来源：{{ parseSource.name }}
@@ -1138,14 +1270,16 @@ const statusClass = computed(() => {
               type="primary"
               class="save-btn"
               :loading="saving"
+              :disabled="saving"
               @click="saveToTodo"
             >
-              保存至待办
+              保存 {{ parseResult.length }} 条至待办
             </el-button>
             <el-button
               class="again-btn"
               text
               type="primary"
+              :disabled="saving"
               @click="restartParse"
             >
               重新解析
@@ -1224,32 +1358,18 @@ const statusClass = computed(() => {
 </template>
 
 <style scoped lang="scss">
-$ai: #8b5cf6;
-$ai-deep: #7c3aed;
-$ai-soft: var(--ai-soft);
 $text: var(--app-text);
 $text-muted: var(--app-text-muted);
 $text-subtle: var(--app-text-subtle);
-$bg: var(--app-bg);
 $surface: var(--app-surface);
 $line: var(--app-line);
-$radius-lg: 16px;
 $radius-md: 12px;
 $radius-sm: 8px;
-$shadow-card:
-  0 1px 2px rgba(16, 24, 40, 0.04),
-  0 1px 3px rgba(16, 24, 40, 0.06);
-$shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
 
-/* 本页的主色是 AI 紫，仅作用于页面作用域 */
 .input-page {
-  --el-color-primary: #{$ai};
-  --el-color-primary-light-3: #a687f8;
-  --el-color-primary-light-5: #c0a9fa;
-  --el-color-primary-light-7: #dacdfc;
-  --el-color-primary-light-8: #e7defd;
-  --el-color-primary-light-9: #f3effe;
-  --el-color-primary-dark-2: #6f3bdd;
+  /* EP 主色不再本地覆盖：亮/暗由 main.css 的 :root / html.dark 统一提供。
+     AI 身份色只保留在本页自定义元素（渐变按钮 / 徽标 / 步骤条）上，
+     EP 标准控件（保存按钮等）回归品牌靛蓝，与其他页面一致。 */
   --el-text-color-regular: #{$text};
   --el-border-radius-base: #{$radius-sm};
 
@@ -1263,25 +1383,7 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   flex-shrink: 0;
 }
 
-/* ---------------- 顶部 ---------------- */
-.page-head {
-  max-width: 1200px;
-  margin: 0 auto 22px;
-}
-
-.page-title {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-  color: $text;
-}
-
-.page-subtitle {
-  margin-top: 6px;
-  font-size: 13.5px;
-  color: $text-muted;
-}
+/* 页头结构样式统一走全局 tw-page-head / tw-page-title / tw-page-subtitle，此处不再重复 */
 
 /* ---------------- 工作区 ---------------- */
 .workbench {
@@ -1293,65 +1395,18 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   margin: 0 auto;
 }
 
-.panel {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-
-  padding: 22px 24px 24px;
-
+/* 面板玻璃底/边框/圆角/阴影统一走全局 .tw-panel（模板已挂类，含 22px 24px 24px 内距），
+   此处只保留两块面板的入场节奏 */
+.input-panel,
+.status-panel {
   animation: rise-in 0.5s var(--ease) backwards;
-
-  &.status-panel {
-    animation-delay: 90ms;
-  }
 }
 
-.panel-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.status-panel {
+  animation-delay: 90ms;
 }
 
-.panel-icon {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  background: var(--brand-soft);
-  color: #4f46e5;
-
-  .icon {
-    width: 19px;
-    height: 19px;
-  }
-
-  &.is-ai {
-    background: linear-gradient(135deg, rgba($ai, 0.14), rgba($ai, 0.06));
-    color: $ai;
-  }
-}
-
-.panel-title-group {
-  min-width: 0;
-}
-
-.panel-title {
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1.4;
-  color: $text;
-}
-
-.panel-sub {
-  margin-top: 2px;
-  font-size: 12.5px;
-  color: $text-subtle;
-}
+/* 面板头（图标底座/标题组）统一走全局 tw-panel-* */
 
 /* ---------------- 表单字段 ---------------- */
 .field {
@@ -1396,7 +1451,7 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   }
 
   &:focus {
-    box-shadow: 0 0 0 2px rgba($ai, 0.35) inset;
+    box-shadow: 0 0 0 2px tint(ai, 35%) inset;
   }
 }
 
@@ -1421,7 +1476,7 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
 .uploader :deep(.el-upload-dragger) {
   width: 100%;
   padding: 26px 18px;
-  border: 1px dashed #d9d3f0;
+  border: 1px dashed tint(ai, 35%);
   border-radius: 14px;
   background: var(--input-bg);
   transition:
@@ -1430,21 +1485,21 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
     box-shadow 0.25s ease;
 
   &:hover {
-    border-color: rgba($ai, 0.6);
+    border-color: tint(ai, 60%);
     background: var(--input-bg);
-    box-shadow: 0 10px 24px -14px rgba($ai, 0.45);
+    box-shadow: 0 10px 24px -14px tint(ai, 45%);
 
     .upload-icon {
       transform: translateY(-3px);
-      box-shadow: 0 8px 16px -8px rgba($ai, 0.6);
+      box-shadow: 0 8px 16px -8px tint(ai, 60%);
     }
   }
 
   &.is-dragover {
-    border-color: $ai;
+    border-color: var(--ai);
     border-style: solid;
-    background: rgba(237, 233, 255, 0.7);
-    box-shadow: 0 14px 30px -14px rgba($ai, 0.55);
+    background: var(--ai-soft);
+    box-shadow: 0 14px 30px -14px tint(ai, 55%);
 
     .upload-icon {
       transform: translateY(-4px) scale(1.06);
@@ -1466,8 +1521,8 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   height: 40px;
   margin-bottom: 4px;
   border-radius: 50%;
-  background: rgba($ai, 0.1);
-  color: $ai;
+  background: tint(ai, 10%);
+  color: var(--ai);
   transition:
     transform 0.25s var(--ease),
     box-shadow 0.25s ease;
@@ -1485,7 +1540,7 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
 }
 
 .upload-ai {
-  color: $ai;
+  color: var(--ai);
 }
 
 .upload-hint {
@@ -1520,8 +1575,8 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   }
 
   &.is-processing {
-    background: rgba($ai, 0.12);
-    color: $ai-deep;
+    background: tint(ai, 12%);
+    color: var(--ai-text);
   }
 
   &.is-done {
@@ -1577,12 +1632,12 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   }
 
   :deep(.el-step__head.is-process) {
-    color: $ai;
-    border-color: $ai;
+    color: var(--ai);
+    border-color: var(--ai);
   }
 
   :deep(.el-step__title.is-process) {
-    color: $ai-deep;
+    color: var(--ai-text);
   }
 
   :deep(.el-step__title.is-finish) {
@@ -1624,9 +1679,9 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
 .progress-block {
   margin-top: 22px;
   padding: 16px;
-  border: 1px solid rgba($ai, 0.2);
+  border: 1px solid tint(ai, 20%);
   border-radius: $radius-md;
-  background: linear-gradient(180deg, rgba($ai, 0.06), rgba($ai, 0.02));
+  background: linear-gradient(180deg, tint(ai, 6%), tint(ai, 2%));
 }
 
 .progress-meta {
@@ -1646,16 +1701,16 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
 .progress-value {
   font-size: 15px;
   font-weight: 700;
-  color: $ai-deep;
+  color: var(--ai-text);
   font-variant-numeric: tabular-nums;
 }
 
 .progress-block :deep(.el-progress-bar__outer) {
-  background-color: #ece9f7;
+  background-color: tint(ai, 12%);
 }
 
 .progress-block :deep(.el-progress-bar__inner) {
-  background-image: linear-gradient(90deg, $ai, #a78bfa);
+  background-image: var(--ai-gradient);
   transition: width 0.18s linear;
 }
 
@@ -1669,9 +1724,9 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
 .result-block {
   margin-top: 22px;
   padding: 16px;
-  border: 1px solid rgba(16, 185, 129, 0.28);
+  border: 1px solid tint(success, 28%);
   border-radius: $radius-md;
-  background: rgba(236, 253, 245, 0.55);
+  background: var(--success-soft);
 }
 
 .result-head {
@@ -1688,7 +1743,7 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--success-soft);
-  color: #10b981;
+  color: var(--success);
 
   .icon {
     width: 16px;
@@ -1706,6 +1761,48 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   margin-top: 2px;
   font-size: 12px;
   color: $text-muted;
+}
+
+/* 多条解析结果：一条待办一张卡片 */
+.result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.result-card {
+  padding: 12px 14px;
+  border: 1px solid tint(success, 28%);
+  border-radius: $radius-sm;
+  background: var(--surface-inner, var(--app-surface, #fff));
+}
+
+.result-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.result-index {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.result-card-title {
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: $text;
 }
 
 .again-btn {
@@ -1757,15 +1854,15 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   }
 
   &.is-reading .source-dot {
-    background: $ai;
+    background: var(--ai);
     animation: pulse 1.1s ease-in-out infinite;
   }
 
   &.is-ready {
-    border-color: rgba(16, 185, 129, 0.3);
+    border-color: tint(success, 30%);
 
     .source-dot {
-      background: #10b981;
+      background: var(--success);
     }
 
     .source-text {
@@ -1774,14 +1871,14 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   }
 
   &.is-error {
-    border-color: rgba(239, 68, 68, 0.32);
+    border-color: tint(danger, 32%);
 
     .source-dot {
-      background: #ef4444;
+      background: var(--danger);
     }
 
     .source-text {
-      color: #ef4444;
+      color: var(--danger);
     }
   }
 }
@@ -1864,7 +1961,7 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
       width: 4px;
       height: 4px;
       border-radius: 50%;
-      background: rgba($ai, 0.7);
+      background: tint(ai, 70%);
     }
   }
 }
@@ -1882,7 +1979,7 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
 
   summary {
     cursor: pointer;
-    color: $ai-deep;
+    color: var(--ai-text);
     font-size: 12px;
     font-weight: 600;
   }
@@ -1910,7 +2007,7 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   gap: 8px;
   margin-top: 22px;
   padding: 24px 16px;
-  border: 1px dashed rgba(226, 225, 234, 0.9);
+  border: 1px dashed var(--app-line);
   border-radius: $radius-md;
   background: var(--input-bg);
   text-align: center;
@@ -1936,12 +2033,7 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
 
 /* ---------------- 底部操作 ---------------- */
 .action-bar {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  @include glass-panel(16px 20px);
 
   display: flex;
   align-items: center;
@@ -1950,7 +2042,6 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   flex-wrap: wrap;
   max-width: 1200px;
   margin: 20px auto 0;
-  padding: 16px 20px;
 
   animation: rise-in 0.5s var(--ease) backwards;
   animation-delay: 160ms;
@@ -1962,7 +2053,7 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
 }
 
 .inline-link {
-  color: $ai-deep;
+  color: var(--ai-text);
   font-weight: 600;
 
   &:hover {
@@ -1975,10 +2066,10 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   height: 44px;
   border: none;
   border-radius: $radius-md;
-  background: linear-gradient(135deg, $ai, $ai-deep);
+  background: var(--ai-gradient);
   font-size: 14.5px;
   font-weight: 600;
-  box-shadow: 0 8px 18px -8px rgba($ai, 0.75);
+  box-shadow: 0 8px 18px -8px tint(ai, 75%);
   transition:
     transform 0.2s ease,
     box-shadow 0.2s ease,
@@ -1991,9 +2082,9 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   }
 
   &:hover:not(.is-disabled) {
-    background: linear-gradient(135deg, #9668f7, #6f3bdd);
+    filter: brightness(1.1);
     transform: translateY(-1px);
-    box-shadow: 0 12px 24px -10px rgba($ai, 0.8);
+    box-shadow: 0 12px 24px -10px tint(ai, 80%);
   }
 
   &:active:not(.is-disabled) {
@@ -2007,8 +2098,8 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   }
 }
 
-/* ---------------- 响应式 ---------------- */
-@media (max-width: 1024px) {
+/* ---------------- 响应式（断点统一为 _mixins 的 tablet(1024) / mobile(768)） ---------------- */
+@include tablet {
   .workbench {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2018,8 +2109,8 @@ $shadow-hover: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
   }
 }
 
-@media (max-width: 720px) {
-  .panel {
+@include mobile {
+  .tw-panel {
     padding: 18px;
   }
 
