@@ -70,12 +70,17 @@ interface ParsedMemo {
 /** 本地 Ollama 配置 */
 const OLLAMA_ENDPOINT = "http://localhost:11434/api/generate";
 const OLLAMA_CHAT_ENDPOINT = "http://localhost:11434/api/chat";
-/** 快速模式用的轻量文本模型 */
-const OLLAMA_MODEL_FAST = "qwen2.5:0.5b";
-/** 精准模式用的完整文本模型（也是 fast 模型缺失时的兜底） */
-const OLLAMA_MODEL_QUALITY = "qwen2.5:3b";
+/** 快速模式：qwen2.5:3b（本地已有，响应快） */
+const OLLAMA_MODEL_FAST = "qwen2.5:3b";
+/** 精准模式：qwen2.5:7b（概括更完整，需要本机先 ollama pull qwen2.5:7b） */
+const OLLAMA_MODEL_QUALITY = "qwen2.5:7b";
 /** 视觉模型（图片走 /api/chat 的 images 通道） */
 const OLLAMA_VISION_MODEL = "qwen2.5vl:3b";
+/**
+ * 上下文窗口：默认 2048 会把长通知/表格截断，
+ * 这里显式放大到 8192 tokens（Ollama 的 options.num_ctx）。
+ */
+const OLLAMA_NUM_CTX = 8192;
 /** 首次请求要加载本地模型，留足超时时间 */
 const OLLAMA_TIMEOUT = 90_000;
 /** 视觉模型还要做图像编码，给更长的超时 */
@@ -368,8 +373,8 @@ const isProcessing = ref(false);
 const isDone = ref(false);
 /** 0 - 100，向 progressTarget 平滑逼近 */
 const progress = ref(0);
-/** 阶段：读取文档 → 请求本地模型 → 完成 */
-type ParseStage = "idle" | "reading" | "thinking" | "done";
+/** 阶段：读取文档 → 图像 OCR（仅图片）→ 文本模型结构化 → 完成 */
+type ParseStage = "idle" | "reading" | "ocr" | "thinking" | "done";
 const parseStage = ref<ParseStage>("idle");
 /** 进度条目标值：读取 28% → 等待模型时爬到 92% → 完成 100% */
 const progressTarget = ref(0);
@@ -419,30 +424,36 @@ const TIME_WARNING = `【时间提取警告】：如果原文写的是「后天�
 /* ---------------------------- AI 解析偏好（来自设置页） ---------------------------- */
 const settingsStore = useSettingsStore();
 
-/** 按设置页选的「摘要长度」拼出对 aiSummary 的字数要求 */
+/** 按设置页选的「摘要长度」拼出对 aiSummary 的字数要求（追加在 Prompt 末尾） */
 function buildSummaryRule(): string {
   switch (settingsStore.summaryLength) {
     case "short":
-      return "【摘要长度】请极度精简，aiSummary 必须是 20 字以内的一句话。";
+      return "【摘要长度】aiSummary 必须极度精简，控制在 20 字以内，一句话说完。";
     case "long":
-      return "【摘要长度】aiSummary 请详细说明，包含前因后果，50-100 字。";
+      return "【摘要长度】aiSummary 请详细说明，包含前因后果与关键背景，约 50-100 字。";
     default:
-      return "【摘要长度】aiSummary 保持在 50 字以内，三行以内即可。";
+      return "【摘要长度】aiSummary 控制在 50 字以内，三行以内即可。";
   }
 }
 
-/** 按设置页选的「解析模型」挑文本模型：fast 用轻量模型，quality 用完整模型 */
+/** 按设置页选的「解析模型」挑文本模型：fast → 3B，quality → 7B */
 function resolveTextModel(): string {
   return settingsStore.aiModel === "quality"
     ? OLLAMA_MODEL_QUALITY
     : OLLAMA_MODEL_FAST;
 }
 
-/** 拼接给本地模型的 Prompt：只取前 2000 字，防止超出上下文 */
+/**
+ * 拼接给本地模型的 Prompt。
+ * 截图 OCR 出来的 Markdown 表格往往比纯文本长，这里放宽到 4000 字
+ * （配合请求里的 num_ctx: 8192，长表格也能完整进入上下文）。
+ */
 function buildPrompt(text: string): string {
+  const clipped = text.substring(0, 4000);
+  const truncated = text.length > 4000 ? "（原文过长，已截取前 4000 字）" : "";
   return `你是一个待办提取助手。请阅读以下文本，提取任务信息。
-${text.substring(0, 2000)}
-（注意：只提取前2000字以防止超出限制）
+${clipped}
+${truncated}
 
 【时间提取要求】：
 1. 请务必仔细寻找任何形式的时间线索，包括具体的日期（如 11月15日）、相对时间（如 今天、明天、两天内、下周），以及「X 天内」「X 小时后」「本周末前」这类模糊期限。
@@ -454,16 +465,14 @@ ${PRIORITY_RULE}
 
 ${TIME_WARNING}
 
-${buildSummaryRule()}
-
 【强制要求】：请务必只输出严格的 JSON 格式，不要输出任何多余的解释说明，不要使用 \`\`\`json 代码块。
 其中 priority 只能填 high、medium、low 三者之一，必须按上面的规则判定。
 另需输出 "keyPoints"：从原文提炼 2-4 个关键要点，逐条写成「维度：内容」，
 只保留原文里确实出现的信息（截止时间、交付要求、注意事项、地点、参与方式等），
 每条不超过 20 字，不要与 aiSummary 重复。
-【多任务提取要求】：如果原文出现了多张表格、多次会议、多个截止时间或多个独立任务，
-请务必全部提取出来，每个任务对应数组里的一个对象，不要合并、不要遗漏，也不要拆得过碎；
-即使只有一个任务，也必须返回「只含一个对象的数组」，永远不要返回单个对象。
+【多任务提取要求】：如果文本包含多个事件（如多行表格、多次会议、多个截止时间），请务必全部提取，并返回 JSON 数组格式。
+每个事件对应数组里的一个对象，不要合并、不要遗漏，也不要拆得过碎；
+如果只有一条，也必须放在数组中返回（形如 [{...}]），任何情况下都不要返回单个对象。
 格式如下（数组，每个对象结构相同）：
 [
   {
@@ -482,47 +491,18 @@ ${buildSummaryRule()}
     "aiSummary": "第 2 份实验报告的要求与截止时间",
     "keyPoints": ["截止时间：9月23日 10:00", "交付要求：实验报告 PDF"]
   }
-]`;
+]
+
+${buildSummaryRule()}`;
 }
 
-/** 视觉通道的 Prompt：先让模型读图，再直接吐 JSON */
+/**
+ * 视觉通道的 Prompt：两阶段级联的第一阶段，只负责把图片转成 Markdown 原文。
+ * 这里刻意不要求 JSON、不做任务抽取——表格/多行内容交给后面的文本模型去结构化，
+ * 否则视觉模型很容易把多行表格合并成一条。
+ */
 function buildVisionPrompt(): string {
-  return `你是一个多模态待办提取助手。请先识别图片里的全部文字内容（可能是老师的通知、实验要求、板书或聊天截图），
-再从识别出的文字中提取任务信息。
-
-${PRIORITY_RULE}
-
-${TIME_WARNING}
-
-${buildSummaryRule()}
-
-【强制要求】：请务必只输出严格的 JSON 格式，不要输出任何多余的解释说明，不要使用 \`\`\`json 代码块。
-其中 priority 只能填 high、medium、low 三者之一，必须按上面的规则判定。
-另需输出 "keyPoints"：从原文提炼 2-4 个关键要点，逐条写成「维度：内容」，
-只保留原文里确实出现的信息（截止时间、交付要求、注意事项、地点、参与方式等），
-每条不超过 20 字，不要与 aiSummary 重复。
-【多任务提取要求】：如果图片里出现了多张表格、多次会议、多个截止时间或多个独立任务，
-请务必全部提取出来，每个任务对应数组里的一个对象，不要合并、不要遗漏，也不要拆得过碎；
-即使只有一个任务，也必须返回「只含一个对象的数组」，永远不要返回单个对象。
-格式如下（数组，每个对象结构相同）：
-[
-  {
-    "title": "任务标题(如：参加创新大赛)",
-    "time": "截止时间或相关时间",
-    "priority": "high/medium/low",
-    "type": "任务类型(如：比赛/学习)",
-    "aiSummary": "一句话摘要概括核心内容",
-    "keyPoints": ["截止时间：11月15日", "交付要求：需要包含源码和文档", "注意事项：严禁抄袭"]
-  },
-  {
-    "title": "实验2",
-    "time": "2026-09-23 10:00:00",
-    "priority": "medium",
-    "type": "实验",
-    "aiSummary": "第 2 份实验报告的要求与截止时间",
-    "keyPoints": ["截止时间：9月23日 10:00", "交付要求：实验报告 PDF"]
-  }
-]`;
+  return `你是一个高精度的 OCR 提取器。请将图片中的所有内容，严格按照 Markdown 格式输出（如果有表格，请用 Markdown 表格语法）。不要漏掉任何一行，不要做任何总结，直接输出原文。`;
 }
 
 interface OllamaGenerateResponse {
@@ -567,6 +547,8 @@ async function requestTextModelWith(
       prompt: buildPrompt(text),
       stream: false,
       format: "json",
+      // 放大上下文窗口，长通知/多表格不会被截断
+      options: { num_ctx: OLLAMA_NUM_CTX },
     }),
     signal,
   });
@@ -585,8 +567,8 @@ async function requestTextModelWith(
 
 /**
  * 文本模型：POST /api/generate
- * 模型档位跟随设置页：fast → qwen2.5:0.5b，quality → qwen2.5:3b。
- * 本机没拉过 0.5b 时自动回退到 3b，避免「改完设置反而解析不了」。
+ * 模型档位跟随设置页：fast → qwen2.5:3b，quality → qwen2.5:7b。
+ * 本机没拉过 7B 时自动回退到 3B，避免「切到精准模式反而解析不了」。
  */
 async function requestTextModel(
   text: string,
@@ -597,15 +579,18 @@ async function requestTextModel(
   try {
     return await requestTextModelWith(text, model, signal);
   } catch (error) {
-    if (model !== OLLAMA_MODEL_QUALITY && error instanceof ModelMissingError) {
-      console.warn(`[Input] ${error.message}，已回退到 ${OLLAMA_MODEL_QUALITY}`);
-      return requestTextModelWith(text, OLLAMA_MODEL_QUALITY, signal);
+    if (model !== OLLAMA_MODEL_FAST && error instanceof ModelMissingError) {
+      console.warn(`[Input] ${error.message}，已回退到 ${OLLAMA_MODEL_FAST}`);
+      return requestTextModelWith(text, OLLAMA_MODEL_FAST, signal);
     }
     throw error;
   }
 }
 
-/** 视觉模型：POST /api/chat，图片以 Base64 放进 messages[].images */
+/**
+ * 视觉模型：POST /api/chat，图片以 Base64 放进 messages[].images。
+ * 第一阶段只做 OCR：返回值是 Markdown 原文，不带 format: "json"，让模型自由描述表格。
+ */
 async function requestVisionModel(
   input: LocalModelInput,
   signal: AbortSignal,
@@ -618,15 +603,15 @@ async function requestVisionModel(
       messages: [
         {
           role: "user",
-          // 图片 + 文本框补充说明时，把补充说明一起带给视觉模型
-          content: input.text
-            ? `${buildVisionPrompt()}\n\n【用户补充说明】：${input.text}`
-            : buildVisionPrompt(),
+          // 只发纯 OCR 指令：用户补充说明留给第二阶段的文本模型处理
+          content: buildVisionPrompt(),
           images: [stripDataUrlPrefix(input.base64)],
         },
       ],
       stream: false,
-      format: "json",
+      // 注意：这里绝对不能加 format: "json"，否则 OCR 原文会被强行压成 JSON
+      // 视觉模型同样放大上下文，避免长截图里的多张表格被截断
+      options: { num_ctx: OLLAMA_NUM_CTX },
     }),
     signal,
   });
@@ -641,19 +626,47 @@ async function requestVisionModel(
   return content;
 }
 
-/** 按输入类型自动切换模型：图片走视觉 /api/chat，其余走文本 /api/generate */
-async function requestLocalModel(input: LocalModelInput): Promise<string> {
+/** 级联阶段：ocr = 视觉模型转 Markdown，extract = 文本模型结构化 */
+type CascadePhase = "ocr" | "extract";
+
+/**
+ * 本地解析入口（两阶段级联）：
+ * - 文本 / PDF / Word：直接走文本模型；
+ * - 图片：先让视觉模型只做 OCR 输出 Markdown，再把 Markdown 交给文本模型按 buildPrompt 结构化。
+ * onPhase 用于把当前阶段回传给页面，驱动进度条文案。
+ */
+async function requestLocalModel(
+  input: LocalModelInput,
+  onPhase?: (phase: CascadePhase) => void,
+): Promise<string> {
   const controller = new AbortController();
   fetchController = controller;
 
+  // 图片要顺序跑两段模型，超时按两段之和给，避免第二阶段被误判超时
   const timeout =
-    input.kind === "image" ? OLLAMA_VISION_TIMEOUT : OLLAMA_TIMEOUT;
+    input.kind === "image"
+      ? OLLAMA_VISION_TIMEOUT + OLLAMA_TIMEOUT
+      : OLLAMA_TIMEOUT;
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
-    return input.kind === "image"
-      ? await requestVisionModel(input, controller.signal)
-      : await requestTextModel(input.text, controller.signal);
+    if (input.kind !== "image") {
+      onPhase?.("extract");
+      return await requestTextModel(input.text, controller.signal);
+    }
+
+    // ① 视觉模型：图片 → Markdown 原文
+    onPhase?.("ocr");
+    const markdown = await requestVisionModel(input, controller.signal);
+
+    // ② 文本模型：Markdown（+ 用户补充说明）→ 多条待办 JSON
+    onPhase?.("extract");
+    const notice = input.text.trim();
+    const structureInput = notice
+      ? `用户补充说明：${notice}\n\n图片 OCR 内容（Markdown）：\n${markdown}`
+      : markdown;
+
+    return await requestTextModel(structureInput, controller.signal);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -845,12 +858,25 @@ async function startParse(): Promise<void> {
   await delay(700);
   if (runId !== parseRunId) return;
 
-  parseStage.value = "thinking";
-  progressTarget.value = 92;
+  // 图片走两阶段级联：先图像 OCR，再文本模型结构化
+  const isImageInput = Boolean(imageBase64);
+
+  parseStage.value = isImageInput ? "ocr" : "thinking";
+  progressTarget.value = isImageInput ? 55 : 92;
 
   try {
     // 输入在进入函数时就已取好，避免等待期间内容被清空
-    const rawResponse = await requestLocalModel(modelInput);
+    const rawResponse = await requestLocalModel(modelInput, (phase) => {
+      if (phase === "ocr") {
+        // 第一阶段：视觉模型只做 OCR（图片 → Markdown）
+        parseStage.value = "ocr";
+        progressTarget.value = 55;
+      } else {
+        // 第二阶段：文本模型阅读 Markdown 并提取多条待办
+        parseStage.value = "thinking";
+        progressTarget.value = 92;
+      }
+    });
     if (runId !== parseRunId) return;
 
     // 一次解析可能产出多条待办，统一按数组处理
@@ -986,13 +1012,15 @@ const processStatus = computed(() => {
 const statusText = computed(() => {
   if (parseStage.value === "done") return "解析完成，已生成待办草稿";
   if (parseStage.value === "reading") return "正在识别文档内容…";
-  if (parseStage.value === "thinking") return "正在请求本地 AI 理解…";
+  if (parseStage.value === "ocr") return "正在识别图像结构…";
+  if (parseStage.value === "thinking") return "正在深度提取任务…";
   if (!isProcessing.value) return "等待提交内容";
   return `正在进行「${steps[activeStep.value]?.title ?? ""}」…`;
 });
 
 const statusLabel = computed(() => {
   if (parseStage.value === "done") return "已完成";
+  if (parseStage.value === "ocr") return "图像识别中";
   if (parseStage.value === "thinking") return "AI 理解中";
   return isProcessing.value ? "处理中" : "等待中";
 });
@@ -1050,7 +1078,7 @@ const statusClass = computed(() => {
             type="textarea"
             :rows="8"
             resize="none"
-            maxlength="500"
+            maxlength="2000"
             show-word-limit
             placeholder="粘贴老师通知或实验要求..."
           />
@@ -1105,7 +1133,7 @@ const statusClass = computed(() => {
                 上传图片/文档，<span class="upload-ai">AI 自动提取</span>
               </p>
               <p class="upload-hint">
-                支持 PDF（取前 3 页）/ DOCX / DOC / 图片，单个文件不超过 20MB
+                支持 PDF / DOCX / DOC / 图片，单文件 ≤ 20MB，AI 自动提取核心要素
               </p>
             </div>
           </el-upload>
@@ -1156,7 +1184,7 @@ const statusClass = computed(() => {
           </span>
           <div class="tw-panel-title-group">
             <h2 class="tw-panel-title">AI 处理状态</h2>
-            <p class="tw-panel-sub">解析耗时约 3 秒</p>
+            <p class="tw-panel-sub">{{ isProcessing ? (parseStage === "reading" ? "正在读取文档内容…" : "AI 解析中…") : isDone ? "解析完成，结果已生成" : "准备就绪，粘贴内容即可开始" }}</p>
           </div>
           <span class="status-chip" :class="statusClass">
             <i v-if="isProcessing" class="status-dot"></i>
@@ -1179,7 +1207,7 @@ const statusClass = computed(() => {
           />
         </el-steps>
 
-        <!-- 处理中 / 完成 / 空闲 三态切换（结果内容来自写死的 JSON 假数据） -->
+        <!-- 处理中 / 完成 / 空闲 三态切换 -->
         <Transition name="fade" mode="out-in">
         <div v-if="isProcessing" class="progress-block">
           <div class="progress-meta">
@@ -1215,7 +1243,7 @@ const statusClass = computed(() => {
             <div>
               <p class="result-title">解析完成</p>
               <p class="result-sub">
-                识别到 {{ parseResult.length }} 条待办 · 共
+                共识别到 {{ parseResult.length }} 条待办 ·
                 {{ totalPoints }} 个关键点
               </p>
             </div>

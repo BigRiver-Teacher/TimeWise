@@ -51,8 +51,16 @@ onUnmounted(() => {
 });
 
 const modelOptions: ModelOption[] = [
-  { value: "fast", label: "快速模式", desc: "本地轻量模型，约 3 秒返回结果" },
-  { value: "quality", label: "精准模式", desc: "本地完整模型，约 8 秒，概括更完整" },
+  {
+    value: "fast",
+    label: "快速模式",
+    desc: "qwen2.5:3b · 约 3 秒返回，适合常规通知",
+  },
+  {
+    value: "quality",
+    label: "精准模式",
+    desc: "qwen2.5:7b · 约 8 秒，长文本与多任务更完整",
+  },
 ];
 
 const lengthOptions: LengthOption[] = [
@@ -64,7 +72,8 @@ const lengthOptions: LengthOption[] = [
 /** 当前模型档位的说明文案 */
 const modelDesc = computed<string>(
   () =>
-    modelOptions.find((item) => item.value === settingsStore.aiModel)?.desc ?? "",
+    modelOptions.find((item) => item.value === settingsStore.aiModel)?.desc ??
+    "",
 );
 
 /* ---------------------------- 个人资料 ---------------------------- */
@@ -323,7 +332,10 @@ onMounted(() => {
             <h3 class="setting-title">摘要长度</h3>
             <p class="setting-desc">AI 概括一句话摘要时保留的信息量</p>
           </div>
-          <el-select v-model="settingsStore.summaryLength" class="setting-control">
+          <el-select
+            v-model="settingsStore.summaryLength"
+            class="setting-control"
+          >
             <el-option
               v-for="option in lengthOptions"
               :key="option.value"
