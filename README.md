@@ -61,3 +61,22 @@ ollama run qwen2.5:3b
 
 # 拉取高精度文本大模型 (约 4.7GB，对应系统的“精准模式”，推荐下载)
 ollama run qwen2.5:7b
+```
+# 2. 启动后端服务 (Node.js)
+打开一个新的终端窗口，进入后端目录并运行：
+
+```bash
+cd server
+npm install
+node server.js
+```
+后端默认运行在 http://localhost:3000 。首次运行会自动在 server 目录下创建 memo.db 数据库文件。
+
+# 3. 启动前端页面 (Vue3)
+打开一个新的终端窗口，回到项目根目录并运行：
+
+``` bash
+npm install
+npm run dev
+```
+打开浏览器访问终端提示的本地地址（如 http://localhost:5173 ）。
